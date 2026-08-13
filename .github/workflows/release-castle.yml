@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Validate release tag
+        id: release_info
         shell: pwsh
         run: |
           $tagVersion = "${{ github.ref_name }}".Substring("castle-v".Length)
@@ -27,6 +28,7 @@ jobs:
           if ($tagVersion -ne $Matches[1]) {
             throw "Tag version $tagVersion does not match CastlePatches version $($Matches[1])."
           }
+          "version=$tagVersion" >> $env:GITHUB_OUTPUT
 
       - name: Configure Win32 release build
         run: cmake -S . -B build-win32 -G "Visual Studio 18 2026" -A Win32
@@ -34,11 +36,22 @@ jobs:
       - name: Build Win32 release
         run: cmake --build build-win32 --config Release --parallel
 
+      - name: Extract release notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.release_info.outputs.version }}"
+          $escapedVersion = [regex]::Escape($version)
+          $changelog = Get-Content "src/CastlePatches/CHANGELOG.md" -Raw
+          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\][^\r\n]*\r?\n(?<notes>.*?)(?=^## |\z)")
+          if (-not $match.Success) {
+            throw "Unable to find release notes for version $version."
+          }
+          Set-Content -Path "release-notes.md" -Value $match.Groups["notes"].Value.Trim() -NoNewline
+
       - name: Create release archive
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.Substring("castle-v".Length)
+          $version = "${{ steps.release_info.outputs.version }}"
           $packageName = "CastlePatches-$version-win32"
           $staging = Join-Path $env:RUNNER_TEMP $packageName
           New-Item -ItemType Directory -Path $staging | Out-Null
@@ -52,5 +65,6 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          name: 幽城幻剑录 补丁工具 ${{ steps.release_info.outputs.version }}
+          body_path: release-notes.md
           files: CastlePatches-*-win32.zip
