@@ -29,6 +29,10 @@ enum {
     ID_WINDOWED,
     ID_CURSOR_LOCK,
     ID_SCALE,
+    ID_EXP_MULTIPLIER,
+    ID_EXP_MULTIPLIER_SPIN,
+    ID_MONEY_MULTIPLIER,
+    ID_MONEY_MULTIPLIER_SPIN,
     ID_LAUNCH,
     ID_STATUS,
 };
@@ -76,14 +80,19 @@ typedef struct LaunchOptions {
     bool cursor_lock;
     /* Fixed-point scale in half-units: 2 = 1×, 3 = 1.5×, ... */
     uint32_t scale2;
+    uint32_t experience_multiplier;
+    uint32_t money_multiplier;
 } LaunchOptions;
 
 static HINSTANCE g_instance;
 static HWND g_main_window;
 static HWND g_scale_combo;
+static HWND g_experience_multiplier_edit;
+static HWND g_money_multiplier_edit;
 static HWND g_status;
 static HFONT g_font;
 static wchar_t g_game_path[MAX_PATH];
+static DWORD g_runtime_start_result;
 
 static const wchar_t kConfigFileName[] = L"CastlePatches.ini";
 
@@ -279,6 +288,24 @@ static uint32_t LoadConfigScale(void) {
     return ScaleIndexToValue(ScaleValueToIndex((uint32_t)GetPrivateProfileIntW(L"Display", L"Scale2", 2, config_path)));
 }
 
+static uint32_t ClampMultiplier(uint32_t value) {
+    return value < 1 ? 1 : value > 10 ? 10 : value;
+}
+
+static uint32_t LoadConfigMultiplier(const wchar_t *key) {
+    wchar_t config_path[MAX_PATH];
+    if (!GetConfigPath(config_path, _countof(config_path))) {
+        return 1;
+    }
+    return ClampMultiplier((uint32_t)GetPrivateProfileIntW(L"Patches", key, 1, config_path));
+}
+
+static uint32_t ReadMultiplier(HWND edit) {
+    BOOL translated = FALSE;
+    uint32_t value = (uint32_t)GetDlgItemInt(g_main_window, GetDlgCtrlID(edit), &translated, FALSE);
+    return translated ? ClampMultiplier(value) : 1;
+}
+
 static void SaveOptions(const LaunchOptions *options) {
     wchar_t config_path[MAX_PATH];
     if (!GetConfigPath(config_path, _countof(config_path))) {
@@ -291,6 +318,11 @@ static void SaveOptions(const LaunchOptions *options) {
     WritePrivateProfileStringW(L"Patches", L"AnywhereSave", options->anywhere_save ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Patches", L"MaxGrowth", options->max_growth ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Patches", L"MaxLoot", options->max_loot ? L"1" : L"0", config_path);
+    wchar_t multiplier[16];
+    _snwprintf_s(multiplier, _countof(multiplier), _TRUNCATE, L"%lu", (unsigned long)options->experience_multiplier);
+    WritePrivateProfileStringW(L"Patches", L"ExperienceMultiplier", multiplier, config_path);
+    _snwprintf_s(multiplier, _countof(multiplier), _TRUNCATE, L"%lu", (unsigned long)options->money_multiplier);
+    WritePrivateProfileStringW(L"Patches", L"MoneyMultiplier", multiplier, config_path);
     WritePrivateProfileStringW(L"Display", L"Windowed", options->windowed ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Display", L"CursorLock", options->cursor_lock ? L"1" : L"0", config_path);
 
@@ -1027,7 +1059,8 @@ static bool InjectRuntimeDll(HANDLE process) {
         return false;
     }
     CloseHandle(thread);
-    if (wait_result == WAIT_OBJECT_0 && exit_code == 0) {
+    g_runtime_start_result = exit_code;
+    if (wait_result == WAIT_OBJECT_0 && exit_code != 1) {
         VirtualFreeEx(process, remote_data, 0, MEM_RELEASE);
         VirtualFreeEx(process, remote_code, 0, MEM_RELEASE);
         SetLastError(ERROR_DLL_INIT_FAILED);
@@ -1152,6 +1185,8 @@ static void Launch(HWND owner) {
         .windowed = IsChecked(ID_WINDOWED),
         .cursor_lock = IsChecked(ID_CURSOR_LOCK),
         .scale2 = ScaleIndexToValue((int)SendMessageW(g_scale_combo, CB_GETCURSEL, 0, 0)),
+        .experience_multiplier = ReadMultiplier(g_experience_multiplier_edit),
+        .money_multiplier = ReadMultiplier(g_money_multiplier_edit),
     };
     SaveOptions(&options);
 
@@ -1171,13 +1206,20 @@ static void Launch(HWND owner) {
         return;
     }
 
-    if (options.windowed && !InjectRuntimeDll(process_info.hProcess)) {
+    if ((options.windowed || options.experience_multiplier != 1 || options.money_multiplier != 1) &&
+        !InjectRuntimeDll(process_info.hProcess)) {
         DWORD error = GetLastError();
         TerminateProcess(process_info.hProcess, 1);
         CloseHandle(process_info.hThread);
         CloseHandle(process_info.hProcess);
         SetLastError(error);
-        ShowWin32Error(owner, L"注入目标进程运行时模块");
+        wchar_t action[128];
+        _snwprintf_s(action,
+                     _countof(action),
+                     _TRUNCATE,
+                     L"注入目标进程运行时模块（运行时状态 %lu）",
+                     (unsigned long)g_runtime_start_result);
+        ShowWin32Error(owner, action);
         return;
     }
 
@@ -1245,6 +1287,18 @@ static void CreateControls(HWND window) {
     AddControl(window, L"BUTTON", L"随时存档", BS_AUTOCHECKBOX, 18, 122, 260, 24, ID_ANYWHERE_SAVE);
     AddControl(window, L"BUTTON", L"最大成长", BS_AUTOCHECKBOX, 18, 148, 260, 24, ID_MAX_GROWTH);
     AddControl(window, L"BUTTON", L"最大掉宝", BS_AUTOCHECKBOX, 18, 174, 260, 24, ID_MAX_LOOT);
+    AddControl(window, L"STATIC", L"经验倍率", SS_LEFT, 18, 204, 80, 22, -1);
+    g_experience_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 92, 202, 44, 20, ID_EXP_MULTIPLIER);
+    HWND experience_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 136, 202, 18, 20, ID_EXP_MULTIPLIER_SPIN);
+    SendMessageW(experience_spin, UDM_SETBUDDY, (WPARAM)g_experience_multiplier_edit, 0);
+    SendMessageW(experience_spin, UDM_SETRANGE32, 1, 10);
+    SetDlgItemInt(window, ID_EXP_MULTIPLIER, LoadConfigMultiplier(L"ExperienceMultiplier"), FALSE);
+    AddControl(window, L"STATIC", L"金钱倍率", SS_LEFT, 170, 204, 80, 22, -1);
+    g_money_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 244, 202, 44, 20, ID_MONEY_MULTIPLIER);
+    HWND money_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 288, 202, 18, 20, ID_MONEY_MULTIPLIER_SPIN);
+    SendMessageW(money_spin, UDM_SETBUDDY, (WPARAM)g_money_multiplier_edit, 0);
+    SendMessageW(money_spin, UDM_SETRANGE32, 1, 10);
+    SetDlgItemInt(window, ID_MONEY_MULTIPLIER, LoadConfigMultiplier(L"MoneyMultiplier"), FALSE);
 
     AddControl(window, L"STATIC", L"显示模式", SS_LEFT, 360, 18, 140, 22, -1);
     AddControl(window, L"BUTTON", L"窗口模式（修正鼠标坐标）", BS_AUTOCHECKBOX, 360, 44, 220, 24, ID_WINDOWED);
@@ -1263,12 +1317,12 @@ static void CreateControls(HWND window) {
                L"启动时创建已挂起的进程，仅向该进程内存写入补丁。",
                SS_LEFT,
                18,
-               210,
+                236,
                552,
                22,
                -1);
-    AddControl(window, L"BUTTON", L"应用补丁并启动游戏", BS_DEFPUSHBUTTON, 360, 240, 210, 32, ID_LAUNCH);
-    g_status = AddControl(window, L"STATIC", L"等待启动。", SS_LEFT, 18, 248, 330, 22, ID_STATUS);
+    AddControl(window, L"BUTTON", L"应用补丁并启动游戏", BS_DEFPUSHBUTTON, 360, 266, 210, 32, ID_LAUNCH);
+    g_status = AddControl(window, L"STATIC", L"等待启动。", SS_LEFT, 18, 274, 330, 22, ID_STATUS);
 
     CheckDlgButton(window, ID_NO_CD, LoadConfigBool(L"NoCd", true) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_MINGYU_FIX, LoadConfigBool(L"MingyuFix", true) ? BST_CHECKED : BST_UNCHECKED);
@@ -1355,13 +1409,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
     }
 
     HWND window = CreateWindowExW(WS_EX_APPWINDOW,
-                                  window_class.lpszClassName,
-                                  L"Castle Patches",
-                                  WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                                  CW_USEDEFAULT,
-                                  CW_USEDEFAULT,
-                                  604,
-                                  320,
+                                   window_class.lpszClassName,
+                                   L"Castle Patches",
+                                   WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                                   0,
+                                   0,
+                                   604,
+                                   346,
                                   NULL,
                                   NULL,
                                   instance,
@@ -1370,6 +1424,16 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
         return 1;
     }
     g_main_window = window;
+
+    RECT work_area = {0};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
+    RECT window_rect = {0};
+    GetWindowRect(window, &window_rect);
+    int width = window_rect.right - window_rect.left;
+    int height = window_rect.bottom - window_rect.top;
+    int x = work_area.left + ((work_area.right - work_area.left) - width) / 2;
+    int y = work_area.top + ((work_area.bottom - work_area.top) - height) / 2;
+    SetWindowPos(window, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     ShowWindow(window, show_command);
     UpdateWindow(window);
