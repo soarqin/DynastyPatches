@@ -318,7 +318,7 @@ static void ShowWin32Error(HWND owner, const wchar_t *action) {
                  action,
                  (unsigned long)error,
                  system_message);
-    MessageBoxW(owner, message, L"Castle Patches", MB_OK | MB_ICONERROR);
+    MessageBoxW(owner, message, L"幽城幻剑录补丁工具", MB_OK | MB_ICONERROR);
 }
 
 static bool IsChecked(int control_id) {
