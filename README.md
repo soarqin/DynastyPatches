@@ -1,6 +1,6 @@
 # Dynasty Patches
 
-Dynasty Patches 是一组面向汉堂经典游戏的补丁工具。当前已包含《Castle》的 `CastlePatches`，用于选择补丁并启动游戏，不会修改原始游戏文件。
+Dynasty Patches 是一组面向汉堂经典游戏的补丁工具。当前已包含《天地劫序传 幽城幻剑录》(Castle: The Forbidden Divines) 的 `CastlePatches`，用于选择补丁并启动游戏，不会修改原始游戏文件。
 
 ## 项目结构
 
