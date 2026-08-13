@@ -1,0 +1,39 @@
+sub_405B30 [0x405b30, 0x405bc8)
+0x00405b30: 81 ec 80 00 00 00            sub     esp, 80h
+0x00405b36: 8b d1                        mov     edx, ecx
+0x00405b38: 57                           push    edi
+0x00405b39: b9 1f 00 00 00               mov     ecx, 1Fh
+0x00405b3e: 33 c0                        xor     eax, eax
+0x00405b40: 8d 7c 24 08                  lea     edi, [esp+84h+var_7C]
+0x00405b44: f3 ab                        rep stosd
+0x00405b46: 8b 84 24 90 00 00 00         mov     eax, [esp+84h+arg_8]
+0x00405b4d: c7 44 24 08 7c 00 00 00      mov     [esp+84h+var_7C], 7Ch ; '|'
+0x00405b55: 85 c0                        test    eax, eax
+0x00405b57: c7 44 24 0c 07 00 01 00      mov     [esp+84h+var_78], 10007h
+0x00405b5f: c7 44 24 70 40 00 00 00      mov     [esp+84h+var_14], 40h ; '@'
+0x00405b67: 5f                           pop     edi
+0x00405b68: 74 08                        jz      short loc_405B72
+0x00405b6a: c7 44 24 6c 40 08 00 00      mov     [esp+80h+var_14], 840h
+0x00405b72: 8b 8c 24 84 00 00 00         mov     ecx, [esp+80h+arg_0]
+0x00405b79: 8b 84 24 88 00 00 00         mov     eax, [esp+80h+arg_4]
+0x00405b80: 89 4c 24 10                  mov     [esp+80h+var_70], ecx
+0x00405b84: 8d 4c 24 00                  lea     ecx, [esp+80h+var_80]
+0x00405b88: 89 44 24 0c                  mov     [esp+80h+var_74], eax
+0x00405b8c: 8b 02                        mov     eax, [edx]
+0x00405b8e: 6a 00                        push    0
+0x00405b90: 51                           push    ecx
+0x00405b91: 8d 4c 24 0c                  lea     ecx, [esp+88h+var_7C]
+0x00405b95: c7 44 24 4c 00 00 00 00      mov     [esp+88h+var_3C], 0
+0x00405b9d: c7 44 24 50 00 00 00 00      mov     [esp+88h+var_38], 0
+0x00405ba5: 8b 10                        mov     edx, [eax]
+0x00405ba7: 51                           push    ecx
+0x00405ba8: 50                           push    eax
+0x00405ba9: ff 52 18                     call    dword ptr [edx+18h]
+0x00405bac: 85 c0                        test    eax, eax
+0x00405bae: 74 0b                        jz      short loc_405BBB
+0x00405bb0: 33 c0                        xor     eax, eax
+0x00405bb2: 81 c4 80 00 00 00            add     esp, 80h
+0x00405bb8: c2 0c 00                     retn    0Ch
+0x00405bbb: 8b 44 24 00                  mov     eax, dword ptr [esp+80h+var_80]
+0x00405bbf: 81 c4 80 00 00 00            add     esp, 80h
+0x00405bc5: c2 0c 00                     retn    0Ch

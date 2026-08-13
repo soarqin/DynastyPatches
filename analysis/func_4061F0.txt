@@ -1,0 +1,26 @@
+sub_4061F0 [0x4061f0, 0x40622f)
+0x004061f0: 56                           push    esi
+0x004061f1: 8b f1                        mov     esi, ecx
+0x004061f3: 8b 46 14                     mov     eax, [esi+14h]
+0x004061f6: 85 c0                        test    eax, eax
+0x004061f8: 74 0d                        jz      short loc_406207
+0x004061fa: 8b 08                        mov     ecx, [eax]
+0x004061fc: 50                           push    eax
+0x004061fd: ff 51 08                     call    dword ptr [ecx+8]
+0x00406200: c7 46 14 00 00 00 00         mov     dword ptr [esi+14h], 0
+0x00406207: 8b 46 04                     mov     eax, [esi+4]
+0x0040620a: 85 c0                        test    eax, eax
+0x0040620c: 74 0d                        jz      short loc_40621B
+0x0040620e: 8b 10                        mov     edx, [eax]
+0x00406210: 50                           push    eax
+0x00406211: ff 52 08                     call    dword ptr [edx+8]
+0x00406214: c7 46 04 00 00 00 00         mov     dword ptr [esi+4], 0
+0x0040621b: 8b 06                        mov     eax, [esi]
+0x0040621d: 85 c0                        test    eax, eax
+0x0040621f: 74 0c                        jz      short loc_40622D
+0x00406221: 8b 08                        mov     ecx, [eax]
+0x00406223: 50                           push    eax
+0x00406224: ff 51 08                     call    dword ptr [ecx+8]
+0x00406227: c7 06 00 00 00 00            mov     dword ptr [esi], 0
+0x0040622d: 5e                           pop     esi
+0x0040622e: c3                           retn

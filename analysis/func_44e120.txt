@@ -1,0 +1,65 @@
+sub_44E0D0 [0x44e0d0, 0x44e143)
+0x0044e0d0: 55                           push    ebp
+0x0044e0d1: 8b ec                        mov     ebp, esp
+0x0044e0d3: 53                           push    ebx
+0x0044e0d4: 56                           push    esi
+0x0044e0d5: 57                           push    edi
+0x0044e0d6: 8b 45 24                     mov     eax, [ebp+arg_1C]
+0x0044e0d9: f7 65 14                     mul     [ebp+arg_C]
+0x0044e0dc: 03 45 20                     add     eax, [ebp+arg_18]
+0x0044e0df: d1 e0                        shl     eax, 1
+0x0044e0e1: 03 45 1c                     add     eax, [ebp+arg_14]
+0x0044e0e4: 8b d8                        mov     ebx, eax
+0x0044e0e6: 8b 55 08                     mov     edx, [ebp+arg_0]
+0x0044e0e9: 8b 75 10                     mov     esi, [ebp+arg_8]
+0x0044e0ec: 8b f8                        mov     edi, eax
+0x0044e0ee: 0b d2                        or      edx, edx
+0x0044e0f0: 74 33                        jz      short loc_44E125
+0x0044e0f2: 90                           nop
+0x0044e0f3: 90                           nop
+0x0044e0f4: 90                           nop
+0x0044e0f5: 90                           nop
+0x0044e0f6: ac                           lodsb
+0x0044e0f7: c1 e0 02                     shl     eax, 2
+0x0044e0fa: c0 e8 02                     shr     al, 2
+0x0044e0fd: 0f b6 c8                     movzx   ecx, al
+0x0044e100: 41                           inc     ecx
+0x0044e101: 2b d1                        sub     edx, ecx
+0x0044e103: d0 ec                        shr     ah, 1
+0x0044e105: 72 09                        jb      short loc_44E110
+0x0044e107: 90                           nop
+0x0044e108: 90                           nop
+0x0044e109: 90                           nop
+0x0044e10a: 90                           nop
+0x0044e10b: f3 66 a5                     rep movsw
+0x0044e10e: eb de                        jmp     short loc_44E0EE
+0x0044e110: d0 ec                        shr     ah, 1
+0x0044e112: 72 0a                        jb      short loc_44E11E
+0x0044e114: 90                           nop
+0x0044e115: 90                           nop
+0x0044e116: 90                           nop
+0x0044e117: 90                           nop
+0x0044e118: d1 e1                        shl     ecx, 1
+0x0044e11a: 03 f9                        add     edi, ecx
+0x0044e11c: eb d0                        jmp     short loc_44E0EE
+0x0044e11e: 66 ad                        lodsw
+0x0044e120: f3 66 ab                     rep stosw
+0x0044e123: eb c9                        jmp     short loc_44E0EE
+0x0044e125: ff 4d 0c                     dec     [ebp+arg_4]
+0x0044e128: 74 12                        jz      short loc_44E13C
+0x0044e12a: 90                           nop
+0x0044e12b: 90                           nop
+0x0044e12c: 90                           nop
+0x0044e12d: 90                           nop
+0x0044e12e: 8b 55 08                     mov     edx, [ebp+arg_0]
+0x0044e131: 8b 45 14                     mov     eax, [ebp+arg_C]
+0x0044e134: d1 e0                        shl     eax, 1
+0x0044e136: 03 d8                        add     ebx, eax
+0x0044e138: 8b fb                        mov     edi, ebx
+0x0044e13a: eb b2                        jmp     short loc_44E0EE
+0x0044e13c: 5f                           pop     edi
+0x0044e13d: 5e                           pop     esi
+0x0044e13e: 5b                           pop     ebx
+0x0044e13f: 8b e5                        mov     esp, ebp
+0x0044e141: 5d                           pop     ebp
+0x0044e142: c3                           retn

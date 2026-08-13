@@ -1,0 +1,406 @@
+
+================================================================================
+0x00460204 GetCursorPos
+xref 0x004044f9 in sub_4044F0 [0x004044f0, 0x004045ff)
+  0x004044f0: 83 ec 08                     sub     esp, 8
+  0x004044f3: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x004044f7: 53                           push    ebx
+  0x004044f8: 50                           push    eax; lpPoint
+  0x004044f9: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x004044ff: a1 28 f6 46 00               mov     eax, dword_46F628
+  0x00404504: 8d 0c 80                     lea     ecx, [eax+eax*4]
+  0x00404507: 8d 14 48                     lea     edx, [eax+ecx*2]
+  0x0040450a: 8b 44 24 08                  mov     eax, [esp+0Ch+Point.y]
+  0x0040450e: 8d 8c 12 67 01 00 00         lea     ecx, [edx+edx+167h]
+xref 0x00404608 in sub_404600 [0x00404600, 0x004046ec)
+  0x00404600: 83 ec 08                     sub     esp, 8
+  0x00404603: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x00404607: 50                           push    eax; lpPoint
+  0x00404608: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0040460e: 8b 44 24 00                  mov     eax, [esp+8+Point.x]
+  0x00404612: 3d 4e 02 00 00               cmp     eax, 24Eh
+  0x00404617: 7d 40                        jge     short loc_404659
+  0x00404619: 3d f4 01 00 00               cmp     eax, 1F4h
+  0x0040461e: 7e 39                        jle     short loc_404659
+xref 0x00408835 in sub_408830 [0x00408830, 0x0040890c)
+  0x00408830: 68 c0 f7 89 00               push    offset Point; lpPoint
+  0x00408835: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0040883b: 85 c0                        test    eax, eax
+  0x0040883d: 75 17                        jnz     short loc_408856
+  0x0040883f: 8d 44 24 04                  lea     eax, [esp+pExceptionObject]
+  0x00408843: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+  0x00408848: 50                           push    eax; pExceptionObject
+  0x00408849: c7 44 24 0c bc 8b 46 00      mov     [esp+8+pExceptionObject], offset unk_468BBC
+xref 0x00430d9b in sub_430D90 [0x00430d90, 0x00430dde)
+  0x00430d90: 83 ec 08                     sub     esp, 8
+  0x00430d93: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x00430d97: 53                           push    ebx
+  0x00430d98: 50                           push    eax; lpPoint
+  0x00430d99: 32 db                        xor     bl, bl
+  0x00430d9b: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x00430da1: 85 c0                        test    eax, eax
+  0x00430da3: 74 2b                        jz      short loc_430DD0
+  0x00430da5: 8b 44 24 04                  mov     eax, [esp+0Ch+Point.x]
+  0x00430da9: 8b 4c 24 10                  mov     ecx, [esp+0Ch+arg_0]
+  0x00430dad: 3b c1                        cmp     eax, ecx
+  0x00430daf: 7c 26                        jl      short loc_430DD7
+  0x00430db1: 3b 44 24 14                  cmp     eax, [esp+0Ch+arg_4]
+xref 0x0043df5b in sub_43DF50 [0x0043df50, 0x0043df87)
+  0x0043df50: 83 ec 08                     sub     esp, 8
+  0x0043df53: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x0043df57: 56                           push    esi
+  0x0043df58: 8b f1                        mov     esi, ecx
+  0x0043df5a: 50                           push    eax; lpPoint
+  0x0043df5b: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0043df61: 85 c0                        test    eax, eax
+  0x0043df63: 74 1b                        jz      short loc_43DF80
+  0x0043df65: 8b 4c 24 04                  mov     ecx, [esp+0Ch+Point.x]
+  0x0043df69: 8b 54 24 08                  mov     edx, [esp+0Ch+Point.y]
+  0x0043df6d: 89 8e 38 02 00 00            mov     [esi+238h], ecx
+xref 0x004044f9 in sub_4044F0 [0x004044f0, 0x004045ff)
+  0x004044f0: 83 ec 08                     sub     esp, 8
+  0x004044f3: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x004044f7: 53                           push    ebx
+  0x004044f8: 50                           push    eax; lpPoint
+  0x004044f9: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x004044ff: a1 28 f6 46 00               mov     eax, dword_46F628
+  0x00404504: 8d 0c 80                     lea     ecx, [eax+eax*4]
+  0x00404507: 8d 14 48                     lea     edx, [eax+ecx*2]
+  0x0040450a: 8b 44 24 08                  mov     eax, [esp+0Ch+Point.y]
+  0x0040450e: 8d 8c 12 67 01 00 00         lea     ecx, [edx+edx+167h]
+xref 0x00404608 in sub_404600 [0x00404600, 0x004046ec)
+  0x00404600: 83 ec 08                     sub     esp, 8
+  0x00404603: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x00404607: 50                           push    eax; lpPoint
+  0x00404608: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0040460e: 8b 44 24 00                  mov     eax, [esp+8+Point.x]
+  0x00404612: 3d 4e 02 00 00               cmp     eax, 24Eh
+  0x00404617: 7d 40                        jge     short loc_404659
+  0x00404619: 3d f4 01 00 00               cmp     eax, 1F4h
+  0x0040461e: 7e 39                        jle     short loc_404659
+xref 0x00408835 in sub_408830 [0x00408830, 0x0040890c)
+  0x00408830: 68 c0 f7 89 00               push    offset Point; lpPoint
+  0x00408835: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0040883b: 85 c0                        test    eax, eax
+  0x0040883d: 75 17                        jnz     short loc_408856
+  0x0040883f: 8d 44 24 04                  lea     eax, [esp+pExceptionObject]
+  0x00408843: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+  0x00408848: 50                           push    eax; pExceptionObject
+  0x00408849: c7 44 24 0c bc 8b 46 00      mov     [esp+8+pExceptionObject], offset unk_468BBC
+xref 0x00430d9b in sub_430D90 [0x00430d90, 0x00430dde)
+  0x00430d90: 83 ec 08                     sub     esp, 8
+  0x00430d93: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x00430d97: 53                           push    ebx
+  0x00430d98: 50                           push    eax; lpPoint
+  0x00430d99: 32 db                        xor     bl, bl
+  0x00430d9b: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x00430da1: 85 c0                        test    eax, eax
+  0x00430da3: 74 2b                        jz      short loc_430DD0
+  0x00430da5: 8b 44 24 04                  mov     eax, [esp+0Ch+Point.x]
+  0x00430da9: 8b 4c 24 10                  mov     ecx, [esp+0Ch+arg_0]
+  0x00430dad: 3b c1                        cmp     eax, ecx
+  0x00430daf: 7c 26                        jl      short loc_430DD7
+  0x00430db1: 3b 44 24 14                  cmp     eax, [esp+0Ch+arg_4]
+xref 0x0043df5b in sub_43DF50 [0x0043df50, 0x0043df87)
+  0x0043df50: 83 ec 08                     sub     esp, 8
+  0x0043df53: 8d 44 24 00                  lea     eax, [esp+8+Point]
+  0x0043df57: 56                           push    esi
+  0x0043df58: 8b f1                        mov     esi, ecx
+  0x0043df5a: 50                           push    eax; lpPoint
+  0x0043df5b: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0043df61: 85 c0                        test    eax, eax
+  0x0043df63: 74 1b                        jz      short loc_43DF80
+  0x0043df65: 8b 4c 24 04                  mov     ecx, [esp+0Ch+Point.x]
+  0x0043df69: 8b 54 24 08                  mov     edx, [esp+0Ch+Point.y]
+  0x0043df6d: 89 8e 38 02 00 00            mov     [esi+238h], ecx
+
+================================================================================
+0x0046019c SetCursorPos
+xref 0x0043df3a in sub_43DF30 [0x0043df30, 0x0043df48)
+  0x0043df30: 8b 44 24 08                  mov     eax, [esp+Y]
+  0x0043df34: 8b 4c 24 04                  mov     ecx, [esp+X]
+  0x0043df38: 50                           push    eax; Y
+  0x0043df39: 51                           push    ecx; X
+  0x0043df3a: ff 15 9c 01 46 00            call    ds:SetCursorPos; USER32
+  0x0043df40: 85 c0                        test    eax, eax
+  0x0043df42: 0f 95 c0                     setnz   al
+  0x0043df45: c2 08 00                     retn    8
+xref 0x0043df3a in sub_43DF30 [0x0043df30, 0x0043df48)
+  0x0043df30: 8b 44 24 08                  mov     eax, [esp+Y]
+  0x0043df34: 8b 4c 24 04                  mov     ecx, [esp+X]
+  0x0043df38: 50                           push    eax; Y
+  0x0043df39: 51                           push    ecx; X
+  0x0043df3a: ff 15 9c 01 46 00            call    ds:SetCursorPos; USER32
+  0x0043df40: 85 c0                        test    eax, eax
+  0x0043df42: 0f 95 c0                     setnz   al
+  0x0043df45: c2 08 00                     retn    8
+
+================================================================================
+0x0043df30 sub_43DF30
+xref 0x004101a8 in sub_40FBE0 [0x0040fbe0, 0x00410320)
+  0x00410198: c7 82 a8 05 00 00 03 00 00 00 mov     dword ptr [edx+5A8h], 3
+  0x004101a2: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004101a8: e8 83 dd 02 00               call    sub_43DF30
+  0x004101ad: 8b 8e c8 05 00 00            mov     ecx, [esi+5C8h]
+  0x004101b3: e8 c8 72 01 00               call    sub_427480
+  0x004101b8: 8b ce                        mov     ecx, esi
+  0x004101ba: 89 5c 24 14                  mov     [esp+28h+var_14], ebx
+  0x004101be: 89 9e b8 05 00 00            mov     [esi+5B8h], ebx
+xref 0x0041374f in sub_413570 [0x00413570, 0x00413779)
+  0x0041373f: 8e 00                        mov     ecx, dword_8E1C4C
+  0x00413741: 8b 50 38                     mov     edx, [eax+38h]
+  0x00413744: 8b 40 34                     mov     eax, [eax+34h]
+  0x00413747: 83 c2 0f                     add     edx, 0Fh
+  0x0041374a: 83 c0 5f                     add     eax, 5Fh ; '_'
+  0x0041374d: 52                           push    edx; Y
+  0x0041374e: 50                           push    eax; X
+  0x0041374f: e8 dc a7 02 00               call    sub_43DF30
+  0x00413754: 8b 0d 48 1c 8e 00            mov     ecx, dword_8E1C48
+  0x0041375a: 5f                           pop     edi
+  0x0041375b: 8b c5                        mov     eax, ebp
+  0x0041375d: 5e                           pop     esi
+  0x0041375e: c7 81 14 01 00 00 01 00 00 00 mov     dword ptr [ecx+114h], 1
+xref 0x004188cf in sub_418830 [0x00418830, 0x004188f9)
+  0x004188bf: 8b 80 68 05 00 00            mov     eax, [eax+568h]
+  0x004188c5: 83 c2 40                     add     edx, 40h ; '@'
+  0x004188c8: 05 aa 00 00 00               add     eax, 0AAh
+  0x004188cd: 52                           push    edx; Y
+  0x004188ce: 50                           push    eax; X
+  0x004188cf: e8 5c 56 02 00               call    sub_43DF30
+  0x004188d4: 83 be 84 05 00 00 02         cmp     dword ptr [esi+584h], 2
+  0x004188db: 75 07                        jnz     short loc_4188E4
+  0x004188dd: c6 86 79 05 00 00 00         mov     byte ptr [esi+579h], 0
+  0x004188e4: c7 86 84 05 00 00 00 00 00 00 mov     dword ptr [esi+584h], 0
+xref 0x0041a65b in sub_41A590 [0x0041a590, 0x0041a685)
+  0x0041a64b: 8b 80 68 05 00 00            mov     eax, [eax+568h]
+  0x0041a651: 83 c2 40                     add     edx, 40h ; '@'
+  0x0041a654: 05 aa 00 00 00               add     eax, 0AAh
+  0x0041a659: 52                           push    edx; Y
+  0x0041a65a: 50                           push    eax; X
+  0x0041a65b: e8 d0 38 02 00               call    sub_43DF30
+  0x0041a660: 83 be 94 05 00 00 02         cmp     dword ptr [esi+594h], 2
+  0x0041a667: 75 07                        jnz     short loc_41A670
+  0x0041a669: c6 86 79 05 00 00 00         mov     byte ptr [esi+579h], 0
+  0x0041a670: c7 86 94 05 00 00 00 00 00 00 mov     dword ptr [esi+594h], 0
+xref 0x0041c43d in sub_41C3F0 [0x0041c3f0, 0x0041c446)
+  0x0041c42d: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x0041c433: 68 8c 00 00 00               push    8Ch; Y
+  0x0041c438: 68 6c 02 00 00               push    26Ch; X
+  0x0041c43d: e8 ee 1a 02 00               call    sub_43DF30
+  0x0041c442: 5f                           pop     edi
+  0x0041c443: 5e                           pop     esi
+  0x0041c444: 5b                           pop     ebx
+  0x0041c445: c3                           retn
+xref 0x00426468 in sub_4262C0 [0x004262c0, 0x004264a9)
+  0x00426458: 00                           mov     [esi+568h], eax
+  0x00426459: 51                           push    ecx; Y
+  0x0042645a: 8b 4a 34                     mov     ecx, [edx+34h]
+  0x0042645d: 8d 54 01 5f                  lea     edx, [ecx+eax+5Fh]
+  0x00426461: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x00426467: 52                           push    edx; X
+  0x00426468: e8 c3 7a 01 00               call    sub_43DF30
+  0x0042646d: 83 be 88 05 00 00 02         cmp     dword ptr [esi+588h], 2
+  0x00426474: 75 1e                        jnz     short loc_426494
+  0x00426476: 8b 86 ac 05 00 00            mov     eax, [esi+5ACh]
+  0x0042647c: 8b 8e b0 05 00 00            mov     ecx, [esi+5B0h]
+xref 0x004273a7 in sub_4272C0 [0x004272c0, 0x00427472)
+  0x00427397: 8d 4c 0f 14                  lea     ecx, [edi+ecx+14h]
+  0x0042739b: 8d 44 02 69                  lea     eax, [edx+eax+69h]
+  0x0042739f: 51                           push    ecx; Y
+  0x004273a0: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004273a6: 50                           push    eax; X
+  0x004273a7: e8 84 6b 01 00               call    sub_43DF30
+  0x004273ac: 5f                           pop     edi
+  0x004273ad: 83 be 7c 05 00 00 02         cmp     dword ptr [esi+57Ch], 2
+  0x004273b4: 75 1e                        jnz     short loc_4273D4
+  0x004273b6: 8b 8e 9c 05 00 00            mov     ecx, [esi+59Ch]
+  0x004273bc: 8b 96 a0 05 00 00            mov     edx, [esi+5A0h]
+xref 0x00427f69 in sub_427E80 [0x00427e80, 0x004281fa)
+  0x00427f59: 8d 4c 0f 14                  lea     ecx, [edi+ecx+14h]
+  0x00427f5d: 8d 44 02 3c                  lea     eax, [edx+eax+3Ch]
+  0x00427f61: 51                           push    ecx; Y
+  0x00427f62: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x00427f68: 50                           push    eax; X
+  0x00427f69: e8 c2 5f 01 00               call    sub_43DF30
+  0x00427f6e: 83 be 7c 05 00 00 02         cmp     dword ptr [esi+57Ch], 2
+  0x00427f75: 75 1f                        jnz     short loc_427F96
+  0x00427f77: 8b 8e bc 05 00 00            mov     ecx, [esi+5BCh]
+  0x00427f7d: 8b 96 c0 05 00 00            mov     edx, [esi+5C0h]
+xref 0x00430330 in sub_4302B0 [0x004302b0, 0x00430341)
+  0x00430320: 05 82 00 00 00               add     eax, 82h
+  0x00430325: 83 c1 2d                     add     ecx, 2Dh ; '-'
+  0x00430328: 51                           push    ecx; Y
+  0x00430329: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x0043032f: 50                           push    eax; X
+  0x00430330: e8 fb db 00 00               call    sub_43DF30
+  0x00430335: c7 86 90 05 00 00 00 00 00 00 mov     dword ptr [esi+590h], 0
+  0x0043033f: 5e                           pop     esi
+  0x00430340: c3                           retn
+xref 0x004381e1 in sub_437E40 [0x00437e40, 0x004383af)
+  0x004381d1: c7 80 a8 05 00 00 03 00 00 00 mov     dword ptr [eax+5A8h], 3
+  0x004381db: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004381e1: e8 4a 5d 00 00               call    sub_43DF30
+  0x004381e6: 8b 8e b0 05 00 00            mov     ecx, [esi+5B0h]
+  0x004381ec: e8 8f f2 fe ff               call    sub_427480
+  0x004381f1: 8b 86 a0 05 00 00            mov     eax, [esi+5A0h]
+  0x004381f7: 33 ed                        xor     ebp, ebp
+xref 0x00446673 in sub_446600 [0x00446600, 0x004467c5)
+  0x00446663: 0d f0 fd 89 00               mov     ecx, dword_89FDF0
+  0x00446668: 52                           push    edx; Y
+  0x00446669: 8b 14 81                     mov     edx, [ecx+eax*4]
+  0x0044666c: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x00446672: 52                           push    edx; X
+  0x00446673: e8 b8 78 ff ff               call    sub_43DF30
+  0x00446678: b1 01                        mov     cl, 1
+  0x0044667a: 81 c6 e4 0d 00 00            add     esi, 0DE4h
+  0x00446680: 81 fe 40 de 00 00            cmp     esi, 0DE40h
+  0x00446686: 7c 9a                        jl      short loc_446622
+  0x00446688: 5f                           pop     edi
+  0x00446689: 5e                           pop     esi
+  0x0044668a: 5b                           pop     ebx
+xref 0x004466e1 in sub_446600 [0x00446600, 0x004467c5)
+  0x004466d1: 0d f0 fd 89 00               mov     ecx, dword_89FDF0
+  0x004466d6: 52                           push    edx; Y
+  0x004466d7: 8b 14 81                     mov     edx, [ecx+eax*4]
+  0x004466da: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004466e0: 52                           push    edx; X
+  0x004466e1: e8 4a 78 ff ff               call    sub_43DF30
+  0x004466e6: b1 01                        mov     cl, 1
+  0x004466e8: 81 ee e4 0d 00 00            sub     esi, 0DE4h
+  0x004466ee: 79 a4                        jns     short loc_446694
+  0x004466f0: 8b 87 18 02 00 00            mov     eax, [edi+218h]
+  0x004466f6: 32 d2                        xor     dl, dl
+  0x004466f8: 32 db                        xor     bl, bl
+xref 0x004467b9 in sub_446600 [0x00446600, 0x004467c5)
+  0x004467a9: 15 f0 fd 89 00               mov     edx, dword_89FDF0
+  0x004467ae: 51                           push    ecx; Y
+  0x004467af: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004467b5: 8b 04 82                     mov     eax, [edx+eax*4]
+  0x004467b8: 50                           push    eax; X
+  0x004467b9: e8 72 77 ff ff               call    sub_43DF30
+  0x004467be: 5f                           pop     edi
+  0x004467bf: 5e                           pop     esi
+  0x004467c0: 5b                           pop     ebx
+  0x004467c1: 83 c4 08                     add     esp, 8
+  0x004467c4: c3                           retn
+xref 0x004468d8 in sub_4468C0 [0x004468c0, 0x00446926)
+  0x004468c8: 00 00                        mov     eax, [esi+10E8h]
+  0x004468ca: 8b 8e e4 10 00 00            mov     ecx, [esi+10E4h]
+  0x004468d0: 50                           push    eax; Y
+  0x004468d1: 51                           push    ecx; X
+  0x004468d2: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004468d8: e8 53 76 ff ff               call    sub_43DF30
+  0x004468dd: 8b 0d 4c 1c 8e 00            mov     ecx, dword_8E1C4C
+  0x004468e3: 33 db                        xor     ebx, ebx
+  0x004468e5: 3b cb                        cmp     ecx, ebx
+  0x004468e7: 74 0c                        jz      short loc_4468F5
+  0x004468e9: 8d 96 90 10 00 00            lea     edx, [esi+1090h]
+  0x004468ef: 52                           push    edx
+
+================================================================================
+0x00408830 sub_408830
+xref 0x004095c3 in sub_409580 [0x00409580, 0x00409635)
+  0x004095b3: 00                           mov     al, byte_468BB9
+  0x004095b4: 84 c0                        test    al, al
+  0x004095b6: 74 1e                        jz      short loc_4095D6
+  0x004095b8: 8b 4c 24 0c                  mov     ecx, [esp+10h+var_4]
+  0x004095bc: 8b 54 24 08                  mov     edx, [esp+10h+pExceptionObject]
+  0x004095c0: 57                           push    edi
+  0x004095c1: 51                           push    ecx; int
+  0x004095c2: 52                           push    edx; pExceptionObject
+  0x004095c3: e8 68 f2 ff ff               call    sub_408830
+  0x004095c8: 83 c4 08                     add     esp, 8
+  0x004095cb: 50                           push    eax
+  0x004095cc: e8 6f f6 ff ff               call    sub_408C40
+  0x004095d1: 83 c4 08                     add     esp, 8
+  0x004095d4: eb 25                        jmp     short loc_4095FB
+  0x004095d6: 8b 44 24 0c                  mov     eax, [esp+10h+var_4]
+  0x004095da: 8b 4c 24 08                  mov     ecx, [esp+10h+pExceptionObject]
+xref 0x004095ea in sub_409580 [0x00409580, 0x00409635)
+  0x004095da: 8b 4c 24 08                  mov     ecx, [esp+10h+pExceptionObject]
+  0x004095de: 50                           push    eax; int
+  0x004095df: 51                           push    ecx; pExceptionObject
+  0x004095e0: c7 05 f4 f7 89 00 00 00 00 00 mov     dword_89F7F4, 0
+  0x004095ea: e8 41 f2 ff ff               call    sub_408830
+  0x004095ef: 6a 00                        push    0
+  0x004095f1: 6a 00                        push    0
+  0x004095f3: e8 48 f6 ff ff               call    sub_408C40
+  0x004095f8: 83 c4 10                     add     esp, 10h
+  0x004095fb: e8 10 f6 ff ff               call    sub_408C10
+  0x00409600: 8b 56 1c                     mov     edx, [esi+1Ch]
+
+================================================================================
+Function 0x0043df30
+  0x0043df30: 8b 44 24 08                  mov     eax, [esp+Y]
+  0x0043df34: 8b 4c 24 04                  mov     ecx, [esp+X]
+  0x0043df38: 50                           push    eax; Y
+  0x0043df39: 51                           push    ecx; X
+  0x0043df3a: ff 15 9c 01 46 00            call    ds:SetCursorPos; USER32
+  0x0043df40: 85 c0                        test    eax, eax
+  0x0043df42: 0f 95 c0                     setnz   al
+  0x0043df45: c2 08 00                     retn    8
+
+================================================================================
+Function 0x00408830
+  0x00408830: 68 c0 f7 89 00               push    offset Point; lpPoint
+  0x00408835: ff 15 04 02 46 00            call    ds:GetCursorPos; USER32
+  0x0040883b: 85 c0                        test    eax, eax
+  0x0040883d: 75 17                        jnz     short loc_408856
+  0x0040883f: 8d 44 24 04                  lea     eax, [esp+pExceptionObject]
+  0x00408843: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+  0x00408848: 50                           push    eax; pExceptionObject
+  0x00408849: c7 44 24 0c bc 8b 46 00      mov     [esp+8+pExceptionObject], offset unk_468BBC
+  0x00408851: e8 71 93 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+  0x00408856: 8b 15 c0 f6 89 00            mov     edx, dword_89F6C0
+  0x0040885c: 8b 4a 28                     mov     ecx, [edx+28h]
+  0x0040885f: 8b 41 04                     mov     eax, [ecx+4]
+  0x00408862: 8b 0d c0 f7 89 00            mov     ecx, Point.x
+  0x00408868: 3b c8                        cmp     ecx, eax
+  0x0040886a: 7e 08                        jle     short loc_408874
+  0x0040886c: 8b c8                        mov     ecx, eax
+  0x0040886e: 89 0d c0 f7 89 00            mov     Point.x, ecx
+  0x00408874: 8b 52 28                     mov     edx, [edx+28h]
+  0x00408877: a1 c4 f7 89 00               mov     eax, Point.y
+  0x0040887c: 8b 52 08                     mov     edx, [edx+8]
+  0x0040887f: 3b c2                        cmp     eax, edx
+  0x00408881: 7e 02                        jle     short loc_408885
+  0x00408883: 8b c2                        mov     eax, edx
+  0x00408885: 8b 15 14 85 97 00            mov     edx, dword_978514
+  0x0040888b: 56                           push    esi
+  0x0040888c: 57                           push    edi
+  0x0040888d: 8b 3d 18 85 97 00            mov     edi, dword_978518
+  0x00408893: 03 c7                        add     eax, edi
+  0x00408895: 03 ca                        add     ecx, edx
+  0x00408897: 68 d4 f7 89 00               push    offset dword_89F7D4
+  0x0040889c: a3 c4 f7 89 00               mov     Point.y, eax
+  0x004088a1: 50                           push    eax
+  0x004088a2: 8b 44 24 18                  mov     eax, [esp+10h+arg_4]
+  0x004088a6: 89 0d c0 f7 89 00            mov     Point.x, ecx
+  0x004088ac: 51                           push    ecx
+  0x004088ad: 8b 4c 24 18                  mov     ecx, [esp+14h+pExceptionObject]
+  0x004088b1: 50                           push    eax
+  0x004088b2: 51                           push    ecx
+  0x004088b3: c7 05 d4 f7 89 00 00 00 00 00 mov     dword_89F7D4, 0
+  0x004088bd: e8 8e 00 00 00               call    sub_408950
+  0x004088c2: 8b f8                        mov     edi, eax
+  0x004088c4: a1 d0 f7 89 00               mov     eax, dword_89F7D0
+  0x004088c9: 83 c4 14                     add     esp, 14h
+  0x004088cc: 85 c0                        test    eax, eax
+  0x004088ce: 75 11                        jnz     short loc_4088E1
+  0x004088d0: 8b 35 d4 f7 89 00            mov     esi, dword_89F7D4
+  0x004088d6: 81 e6 ff 00 00 00            and     esi, 0FFh
+  0x004088dc: c1 e6 10                     shl     esi, 10h
+  0x004088df: eb 05                        jmp     short loc_4088E6
+  0x004088e1: be 02 00 05 00               mov     esi, 50002h
+  0x004088e6: 8b 15 c4 f7 89 00            mov     edx, Point.y
+  0x004088ec: a1 c0 f7 89 00               mov     eax, Point.x
+  0x004088f1: 8b 0d e0 f7 89 00            mov     ecx, dword_89F7E0
+  0x004088f7: 52                           push    edx
+  0x004088f8: 50                           push    eax
+  0x004088f9: e8 02 1e 00 00               call    sub_40A700
+  0x004088fe: 8b 0d e0 f7 89 00            mov     ecx, dword_89F7E0
+  0x00408904: 8b c7                        mov     eax, edi
+  0x00408906: 5f                           pop     edi
+  0x00408907: 89 71 18                     mov     [ecx+18h], esi
+  0x0040890a: 5e                           pop     esi
+  0x0040890b: c3                           retn

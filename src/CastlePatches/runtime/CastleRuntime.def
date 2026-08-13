@@ -1,0 +1,3 @@
+LIBRARY CastleRuntime
+EXPORTS
+    CastleRuntimeStart=_CastleRuntimeStart@0

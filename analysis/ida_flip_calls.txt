@@ -1,0 +1,434 @@
+
+================================================================================
+Requested VA: 0x004064e0
+Function: sub_4064E0 [0x004064e0, 0x00406589)
+0x004064e0: 83 ec 14                     sub     esp, 14h <=
+0x004064e3: 56                           push    esi
+0x004064e4: 8b f1                        mov     esi, ecx
+0x004064e6: 8a 46 30                     mov     al, [esi+30h]
+0x004064e9: 84 c0                        test    al, al
+0x004064eb: 74 2c                        jz      short loc_406519
+0x004064ed: 8b 76 04                     mov     esi, [esi+4]
+0x004064f0: 6a 01                        push    1
+0x004064f2: 6a 00                        push    0
+0x004064f4: 56                           push    esi
+0x004064f5: 8b 06                        mov     eax, [esi]
+0x004064f7: ff 50 2c                     call    dword ptr [eax+2Ch]
+0x004064fa: 85 c0                        test    eax, eax
+0x004064fc: 0f 8d 82 00 00 00            jge     loc_406584
+0x00406502: 8d 4c 24 04                  lea     ecx, [esp+18h+pExceptionObject]
+0x00406506: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+0x0040650b: 51                           push    ecx; pExceptionObject
+0x0040650c: c7 44 24 0c b0 8a 46 00      mov     dword ptr [esp+20h+pExceptionObject], offset aCouldnTPerform; "Couldn't perform flip!\n"
+0x00406514: e8 ae b6 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+0x00406519: a1 84 f3 46 00               mov     eax, dword_46F384
+0x0040651e: 8d 54 24 08                  lea     edx, [esp+18h+Rect]
+0x00406522: 57                           push    edi
+0x00406523: 52                           push    edx; lpRect
+0x00406524: 50                           push    eax; hWnd
+0x00406525: ff 15 e8 01 46 00            call    ds:GetClientRect; USER32
+0x0040652b: 8b 15 84 f3 46 00            mov     edx, dword_46F384
+0x00406531: 8b 3d f0 01 46 00            mov     edi, ds:ClientToScreen; USER32
+0x00406537: 8d 4c 24 0c                  lea     ecx, [esp+1Ch+Rect]
+0x0040653b: 51                           push    ecx; lpPoint
+0x0040653c: 52                           push    edx; hWnd
+0x0040653d: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040653f: 8b 0d 84 f3 46 00            mov     ecx, dword_46F384
+0x00406545: 8d 44 24 14                  lea     eax, [esp+1Ch+Rect.right]
+0x00406549: 50                           push    eax; lpPoint
+0x0040654a: 51                           push    ecx; hWnd
+0x0040654b: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040654d: 8b 4e 08                     mov     ecx, [esi+8]
+0x00406550: 8b 46 04                     mov     eax, [esi+4]
+0x00406553: 6a 00                        push    0
+0x00406555: 68 00 00 00 01               push    1000000h
+0x0040655a: 8b 10                        mov     edx, [eax]
+0x0040655c: 6a 00                        push    0
+0x0040655e: 51                           push    ecx
+0x0040655f: 8d 4c 24 1c                  lea     ecx, [esp+2Ch+Rect]
+
+================================================================================
+Requested VA: 0x00406500
+Function: sub_4064E0 [0x004064e0, 0x00406589)
+0x004064e0: 83 ec 14                     sub     esp, 14h
+0x004064e3: 56                           push    esi
+0x004064e4: 8b f1                        mov     esi, ecx
+0x004064e6: 8a 46 30                     mov     al, [esi+30h]
+0x004064e9: 84 c0                        test    al, al
+0x004064eb: 74 2c                        jz      short loc_406519
+0x004064ed: 8b 76 04                     mov     esi, [esi+4]
+0x004064f0: 6a 01                        push    1
+0x004064f2: 6a 00                        push    0
+0x004064f4: 56                           push    esi
+0x004064f5: 8b 06                        mov     eax, [esi]
+0x004064f7: ff 50 2c                     call    dword ptr [eax+2Ch]
+0x004064fa: 85 c0                        test    eax, eax
+0x004064fc: 0f 8d 82 00 00 00            jge     loc_406584
+0x00406502: 8d 4c 24 04                  lea     ecx, [esp+18h+pExceptionObject]
+0x00406506: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+0x0040650b: 51                           push    ecx; pExceptionObject
+0x0040650c: c7 44 24 0c b0 8a 46 00      mov     dword ptr [esp+20h+pExceptionObject], offset aCouldnTPerform; "Couldn't perform flip!\n"
+0x00406514: e8 ae b6 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+0x00406519: a1 84 f3 46 00               mov     eax, dword_46F384
+0x0040651e: 8d 54 24 08                  lea     edx, [esp+18h+Rect]
+0x00406522: 57                           push    edi
+0x00406523: 52                           push    edx; lpRect
+0x00406524: 50                           push    eax; hWnd
+0x00406525: ff 15 e8 01 46 00            call    ds:GetClientRect; USER32
+0x0040652b: 8b 15 84 f3 46 00            mov     edx, dword_46F384
+0x00406531: 8b 3d f0 01 46 00            mov     edi, ds:ClientToScreen; USER32
+0x00406537: 8d 4c 24 0c                  lea     ecx, [esp+1Ch+Rect]
+0x0040653b: 51                           push    ecx; lpPoint
+0x0040653c: 52                           push    edx; hWnd
+0x0040653d: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040653f: 8b 0d 84 f3 46 00            mov     ecx, dword_46F384
+0x00406545: 8d 44 24 14                  lea     eax, [esp+1Ch+Rect.right]
+0x00406549: 50                           push    eax; lpPoint
+0x0040654a: 51                           push    ecx; hWnd
+0x0040654b: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040654d: 8b 4e 08                     mov     ecx, [esi+8]
+0x00406550: 8b 46 04                     mov     eax, [esi+4]
+0x00406553: 6a 00                        push    0
+0x00406555: 68 00 00 00 01               push    1000000h
+0x0040655a: 8b 10                        mov     edx, [eax]
+0x0040655c: 6a 00                        push    0
+0x0040655e: 51                           push    ecx
+0x0040655f: 8d 4c 24 1c                  lea     ecx, [esp+2Ch+Rect]
+0x00406563: 51                           push    ecx
+0x00406564: 50                           push    eax
+0x00406565: ff 52 14                     call    dword ptr [edx+14h]
+0x00406568: 85 c0                        test    eax, eax
+0x0040656a: 5f                           pop     edi
+0x0040656b: 7d 17                        jge     short loc_406584
+0x0040656d: 8d 54 24 04                  lea     edx, [esp+18h+pExceptionObject]
+0x00406571: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+0x00406576: 52                           push    edx; pExceptionObject
+0x00406577: c7 44 24 0c 98 8a 46 00      mov     dword ptr [esp+20h+pExceptionObject], offset aCouldnTPerform_0; "Couldn't perform Blit!\n"
+0x0040657f: e8 43 b6 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+
+================================================================================
+Requested VA: 0x00406519
+Function: sub_4064E0 [0x004064e0, 0x00406589)
+0x004064e0: 83 ec 14                     sub     esp, 14h
+0x004064e3: 56                           push    esi
+0x004064e4: 8b f1                        mov     esi, ecx
+0x004064e6: 8a 46 30                     mov     al, [esi+30h]
+0x004064e9: 84 c0                        test    al, al
+0x004064eb: 74 2c                        jz      short loc_406519
+0x004064ed: 8b 76 04                     mov     esi, [esi+4]
+0x004064f0: 6a 01                        push    1
+0x004064f2: 6a 00                        push    0
+0x004064f4: 56                           push    esi
+0x004064f5: 8b 06                        mov     eax, [esi]
+0x004064f7: ff 50 2c                     call    dword ptr [eax+2Ch]
+0x004064fa: 85 c0                        test    eax, eax
+0x004064fc: 0f 8d 82 00 00 00            jge     loc_406584
+0x00406502: 8d 4c 24 04                  lea     ecx, [esp+18h+pExceptionObject]
+0x00406506: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+0x0040650b: 51                           push    ecx; pExceptionObject
+0x0040650c: c7 44 24 0c b0 8a 46 00      mov     dword ptr [esp+20h+pExceptionObject], offset aCouldnTPerform; "Couldn't perform flip!\n"
+0x00406514: e8 ae b6 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+0x00406519: a1 84 f3 46 00               mov     eax, dword_46F384 <=
+0x0040651e: 8d 54 24 08                  lea     edx, [esp+18h+Rect]
+0x00406522: 57                           push    edi
+0x00406523: 52                           push    edx; lpRect
+0x00406524: 50                           push    eax; hWnd
+0x00406525: ff 15 e8 01 46 00            call    ds:GetClientRect; USER32
+0x0040652b: 8b 15 84 f3 46 00            mov     edx, dword_46F384
+0x00406531: 8b 3d f0 01 46 00            mov     edi, ds:ClientToScreen; USER32
+0x00406537: 8d 4c 24 0c                  lea     ecx, [esp+1Ch+Rect]
+0x0040653b: 51                           push    ecx; lpPoint
+0x0040653c: 52                           push    edx; hWnd
+0x0040653d: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040653f: 8b 0d 84 f3 46 00            mov     ecx, dword_46F384
+0x00406545: 8d 44 24 14                  lea     eax, [esp+1Ch+Rect.right]
+0x00406549: 50                           push    eax; lpPoint
+0x0040654a: 51                           push    ecx; hWnd
+0x0040654b: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040654d: 8b 4e 08                     mov     ecx, [esi+8]
+0x00406550: 8b 46 04                     mov     eax, [esi+4]
+0x00406553: 6a 00                        push    0
+0x00406555: 68 00 00 00 01               push    1000000h
+0x0040655a: 8b 10                        mov     edx, [eax]
+0x0040655c: 6a 00                        push    0
+0x0040655e: 51                           push    ecx
+0x0040655f: 8d 4c 24 1c                  lea     ecx, [esp+2Ch+Rect]
+0x00406563: 51                           push    ecx
+0x00406564: 50                           push    eax
+0x00406565: ff 52 14                     call    dword ptr [edx+14h]
+0x00406568: 85 c0                        test    eax, eax
+0x0040656a: 5f                           pop     edi
+0x0040656b: 7d 17                        jge     short loc_406584
+0x0040656d: 8d 54 24 04                  lea     edx, [esp+18h+pExceptionObject]
+0x00406571: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+0x00406576: 52                           push    edx; pExceptionObject
+0x00406577: c7 44 24 0c 98 8a 46 00      mov     dword ptr [esp+20h+pExceptionObject], offset aCouldnTPerform_0; "Couldn't perform Blit!\n"
+0x0040657f: e8 43 b6 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+0x00406584: 5e                           pop     esi
+0x00406585: 83 c4 14                     add     esp, 14h
+0x00406588: c3                           retn
+
+================================================================================
+Requested VA: 0x00406584
+Function: sub_4064E0 [0x004064e0, 0x00406589)
+0x00406524: 50                           push    eax; hWnd
+0x00406525: ff 15 e8 01 46 00            call    ds:GetClientRect; USER32
+0x0040652b: 8b 15 84 f3 46 00            mov     edx, dword_46F384
+0x00406531: 8b 3d f0 01 46 00            mov     edi, ds:ClientToScreen; USER32
+0x00406537: 8d 4c 24 0c                  lea     ecx, [esp+1Ch+Rect]
+0x0040653b: 51                           push    ecx; lpPoint
+0x0040653c: 52                           push    edx; hWnd
+0x0040653d: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040653f: 8b 0d 84 f3 46 00            mov     ecx, dword_46F384
+0x00406545: 8d 44 24 14                  lea     eax, [esp+1Ch+Rect.right]
+0x00406549: 50                           push    eax; lpPoint
+0x0040654a: 51                           push    ecx; hWnd
+0x0040654b: ff d7                        call    edi ; ClientToScreen; USER32
+0x0040654d: 8b 4e 08                     mov     ecx, [esi+8]
+0x00406550: 8b 46 04                     mov     eax, [esi+4]
+0x00406553: 6a 00                        push    0
+0x00406555: 68 00 00 00 01               push    1000000h
+0x0040655a: 8b 10                        mov     edx, [eax]
+0x0040655c: 6a 00                        push    0
+0x0040655e: 51                           push    ecx
+0x0040655f: 8d 4c 24 1c                  lea     ecx, [esp+2Ch+Rect]
+0x00406563: 51                           push    ecx
+0x00406564: 50                           push    eax
+0x00406565: ff 52 14                     call    dword ptr [edx+14h]
+0x00406568: 85 c0                        test    eax, eax
+0x0040656a: 5f                           pop     edi
+0x0040656b: 7d 17                        jge     short loc_406584
+0x0040656d: 8d 54 24 04                  lea     edx, [esp+18h+pExceptionObject]
+0x00406571: 68 d8 37 46 00               push    offset __TI2PAD; pThrowInfo
+0x00406576: 52                           push    edx; pExceptionObject
+0x00406577: c7 44 24 0c 98 8a 46 00      mov     dword ptr [esp+20h+pExceptionObject], offset aCouldnTPerform_0; "Couldn't perform Blit!\n"
+0x0040657f: e8 43 b6 04 00               call    __CxxThrowException@8; _CxxThrowException(x,x)
+0x00406584: 5e                           pop     esi <=
+0x00406585: 83 c4 14                     add     esp, 14h
+0x00406588: c3                           retn
+
+================================================================================
+Requested VA: 0x00406590
+Function: sub_406590 [0x00406590, 0x004065dc)
+0x00406590: 56                           push    esi <=
+0x00406591: 8b 74 24 0c                  mov     esi, [esp+4+arg_4]
+0x00406595: 85 f6                        test    esi, esi
+0x00406597: 7e 41                        jle     short loc_4065DA
+0x00406599: 8b 4c 24 08                  mov     ecx, [esp+4+arg_0]
+0x0040659d: 53                           push    ebx
+0x0040659e: 57                           push    edi
+0x0040659f: 8d 41 01                     lea     eax, [ecx+1]
+0x004065a2: 66 0f b6 50 01               movzx   dx, byte ptr [eax+1]
+0x004065a7: 66 0f b6 38                  movzx   di, byte ptr [eax]
+0x004065ab: 8a 58 ff                     mov     bl, [eax-1]
+0x004065ae: 81 e2 f8 ff 00 00            and     edx, 0FFF8h
+0x004065b4: c1 e2 05                     shl     edx, 5
+0x004065b7: 81 e7 f8 ff 00 00            and     edi, 0FFF8h
+0x004065bd: 83 c0 03                     add     eax, 3
+0x004065c0: c0 eb 03                     shr     bl, 3
+0x004065c3: 0b d7                        or      edx, edi
+0x004065c5: 83 c1 02                     add     ecx, 2
+0x004065c8: 66 0f b6 fb                  movzx   di, bl
+0x004065cc: c1 e2 02                     shl     edx, 2
+0x004065cf: 0b d7                        or      edx, edi
+0x004065d1: 4e                           dec     esi
+0x004065d2: 66 89 51 fe                  mov     [ecx-2], dx
+0x004065d6: 75 ca                        jnz     short loc_4065A2
+0x004065d8: 5f                           pop     edi
+0x004065d9: 5b                           pop     ebx
+0x004065da: 5e                           pop     esi
+0x004065db: c3                           retn
+
+================================================================================
+Requested VA: 0x004065b0
+Function: sub_406590 [0x00406590, 0x004065dc)
+0x00406590: 56                           push    esi
+0x00406591: 8b 74 24 0c                  mov     esi, [esp+4+arg_4]
+0x00406595: 85 f6                        test    esi, esi
+0x00406597: 7e 41                        jle     short loc_4065DA
+0x00406599: 8b 4c 24 08                  mov     ecx, [esp+4+arg_0]
+0x0040659d: 53                           push    ebx
+0x0040659e: 57                           push    edi
+0x0040659f: 8d 41 01                     lea     eax, [ecx+1]
+0x004065a2: 66 0f b6 50 01               movzx   dx, byte ptr [eax+1]
+0x004065a7: 66 0f b6 38                  movzx   di, byte ptr [eax]
+0x004065ab: 8a 58 ff                     mov     bl, [eax-1]
+0x004065ae: 81 e2 f8 ff 00 00            and     edx, 0FFF8h
+0x004065b4: c1 e2 05                     shl     edx, 5
+0x004065b7: 81 e7 f8 ff 00 00            and     edi, 0FFF8h
+0x004065bd: 83 c0 03                     add     eax, 3
+0x004065c0: c0 eb 03                     shr     bl, 3
+0x004065c3: 0b d7                        or      edx, edi
+0x004065c5: 83 c1 02                     add     ecx, 2
+0x004065c8: 66 0f b6 fb                  movzx   di, bl
+0x004065cc: c1 e2 02                     shl     edx, 2
+0x004065cf: 0b d7                        or      edx, edi
+0x004065d1: 4e                           dec     esi
+0x004065d2: 66 89 51 fe                  mov     [ecx-2], dx
+0x004065d6: 75 ca                        jnz     short loc_4065A2
+0x004065d8: 5f                           pop     edi
+0x004065d9: 5b                           pop     ebx
+0x004065da: 5e                           pop     esi
+0x004065db: c3                           retn
+
+================================================================================
+Requested VA: 0x00406600
+Function: sub_4065E0 [0x004065e0, 0x0040662a)
+0x004065e0: 56                           push    esi
+0x004065e1: 8b 74 24 0c                  mov     esi, [esp+4+arg_4]
+0x004065e5: 85 f6                        test    esi, esi
+0x004065e7: 7e 3f                        jle     short loc_406628
+0x004065e9: 8b 4c 24 08                  mov     ecx, [esp+4+arg_0]
+0x004065ed: 53                           push    ebx
+0x004065ee: 57                           push    edi
+0x004065ef: 8d 41 01                     lea     eax, [ecx+1]
+0x004065f2: 8a 50 01                     mov     dl, [eax+1]
+0x004065f5: 8a 58 ff                     mov     bl, [eax-1]
+0x004065f8: 66 0f b6 38                  movzx   di, byte ptr [eax]
+0x004065fc: 80 e2 f8                     and     dl, 0F8h
+0x004065ff: 81 e7 f8 ff 00 00            and     edi, 0FFF8h
+0x00406605: 66 0f b6 d2                  movzx   dx, dl
+0x00406609: c1 e2 05                     shl     edx, 5
+0x0040660c: c0 eb 03                     shr     bl, 3
+0x0040660f: 0b d7                        or      edx, edi
+0x00406611: 83 c0 03                     add     eax, 3
+0x00406614: 66 0f b6 fb                  movzx   di, bl
+0x00406618: c1 e2 03                     shl     edx, 3
+0x0040661b: 0b d7                        or      edx, edi
+0x0040661d: 66 89 11                     mov     [ecx], dx
+0x00406620: 83 c1 02                     add     ecx, 2
+0x00406623: 4e                           dec     esi
+0x00406624: 75 cc                        jnz     short loc_4065F2
+0x00406626: 5f                           pop     edi
+0x00406627: 5b                           pop     ebx
+0x00406628: 5e                           pop     esi
+0x00406629: c3                           retn
+
+================================================================================
+Requested VA: 0x004066a0
+Function: sub_406660 [0x00406660, 0x00406794)
+0x00406660: b8 40 4e 00 00               mov     eax, 4E40h
+0x00406665: e8 36 bb 04 00               call    __alloca_probe
+0x0040666a: 8b 84 24 48 4e 00 00         mov     eax, [esp+4E40h+arg_4]
+0x00406671: 53                           push    ebx
+0x00406672: 56                           push    esi
+0x00406673: 8b f1                        mov     esi, ecx
+0x00406675: 8b 8c 24 54 4e 00 00         mov     ecx, [esp+4E48h+arg_8]
+0x0040667c: 8b 94 24 58 4e 00 00         mov     edx, [esp+4E48h+arg_C]
+0x00406683: 89 06                        mov     [esi], eax
+0x00406685: 33 c0                        xor     eax, eax
+0x00406687: 89 46 08                     mov     [esi+8], eax
+0x0040668a: 89 46 0c                     mov     [esi+0Ch], eax
+0x0040668d: 8b 84 24 5c 4e 00 00         mov     eax, [esp+4E48h+arg_10]
+0x00406694: 89 4e 04                     mov     [esi+4], ecx
+0x00406697: 8b 8c 24 60 4e 00 00         mov     ecx, [esp+4E48h+arg_14]
+0x0040669e: 89 46 14                     mov     [esi+14h], eax
+0x004066a1: 8b 84 24 68 4e 00 00         mov     eax, [esp+4E48h+arg_1C]
+0x004066a8: 57                           push    edi
+0x004066a9: 89 4e 18                     mov     [esi+18h], ecx
+0x004066ac: 89 46 20                     mov     [esi+20h], eax
+0x004066af: b9 90 13 00 00               mov     ecx, 1390h
+0x004066b4: 33 c0                        xor     eax, eax
+0x004066b6: 8d 7c 24 0c                  lea     edi, [esp+4E4Ch+var_4E40]
+0x004066ba: 89 56 10                     mov     [esi+10h], edx
+0x004066bd: 8b 94 24 68 4e 00 00         mov     edx, [esp+4E4Ch+arg_18]
+0x004066c4: f3 ab                        rep stosd
+0x004066c6: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]
+0x004066ca: 89 56 1c                     mov     [esi+1Ch], edx
+0x004066cd: 51                           push    ecx
+0x004066ce: ff 15 5c 02 46 00            call    ds:ijlInit
+0x004066d4: 8b 84 24 50 4e 00 00         mov     eax, [esp+4E4Ch+FullPath]
+0x004066db: 8d 54 24 30                  lea     edx, [esp+4E4Ch+Block]
+0x004066df: 6a 01                        push    1; int
+0x004066e1: 52                           push    edx; int
+0x004066e2: 50                           push    eax; FullPath
+0x004066e3: e8 c8 be ff ff               call    sub_4025B0
+0x004066e8: 8b 1d 60 02 46 00            mov     ebx, ds:ijlRead
+0x004066ee: 83 c4 0c                     add     esp, 0Ch
+0x004066f1: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]
+0x004066f5: 89 44 24 34                  mov     [esp+4E4Ch+var_4E18], eax
+0x004066f9: 6a 01                        push    1
+0x004066fb: 51                           push    ecx
+0x004066fc: ff d3                        call    ebx ; ijlRead
+0x004066fe: 8b 44 24 3c                  mov     eax, [esp+4E4Ch+var_4E10]
+0x00406702: 0f af 44 24 38               imul    eax, [esp+4E4Ch+var_4E14]
+0x00406707: 8d 04 40                     lea     eax, [eax+eax*2]
+0x0040670a: 50                           push    eax; Size
+0x0040670b: e8 4f af 04 00               call    ??2@YAPAXI@Z; operator new(uint)
+0x00406710: 8b 54 24 3c                  mov     edx, [esp+4E50h+var_4E14]
+0x00406714: 83 c4 04                     add     esp, 4
+0x00406717: 8b f8                        mov     edi, eax
+0x00406719: 8b 44 24 3c                  mov     eax, [esp+4E4Ch+var_4E10]
+0x0040671d: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]
+
+================================================================================
+Requested VA: 0x00406700
+Function: sub_406660 [0x00406660, 0x00406794)
+0x004066a0: 14                           mov     [esi+14h], eax
+0x004066a1: 8b 84 24 68 4e 00 00         mov     eax, [esp+4E48h+arg_1C]
+0x004066a8: 57                           push    edi
+0x004066a9: 89 4e 18                     mov     [esi+18h], ecx
+0x004066ac: 89 46 20                     mov     [esi+20h], eax
+0x004066af: b9 90 13 00 00               mov     ecx, 1390h
+0x004066b4: 33 c0                        xor     eax, eax
+0x004066b6: 8d 7c 24 0c                  lea     edi, [esp+4E4Ch+var_4E40]
+0x004066ba: 89 56 10                     mov     [esi+10h], edx
+0x004066bd: 8b 94 24 68 4e 00 00         mov     edx, [esp+4E4Ch+arg_18]
+0x004066c4: f3 ab                        rep stosd
+0x004066c6: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]
+0x004066ca: 89 56 1c                     mov     [esi+1Ch], edx
+0x004066cd: 51                           push    ecx
+0x004066ce: ff 15 5c 02 46 00            call    ds:ijlInit
+0x004066d4: 8b 84 24 50 4e 00 00         mov     eax, [esp+4E4Ch+FullPath]
+0x004066db: 8d 54 24 30                  lea     edx, [esp+4E4Ch+Block]
+0x004066df: 6a 01                        push    1; int
+0x004066e1: 52                           push    edx; int
+0x004066e2: 50                           push    eax; FullPath
+0x004066e3: e8 c8 be ff ff               call    sub_4025B0
+0x004066e8: 8b 1d 60 02 46 00            mov     ebx, ds:ijlRead
+0x004066ee: 83 c4 0c                     add     esp, 0Ch
+0x004066f1: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]
+0x004066f5: 89 44 24 34                  mov     [esp+4E4Ch+var_4E18], eax
+0x004066f9: 6a 01                        push    1
+0x004066fb: 51                           push    ecx
+0x004066fc: ff d3                        call    ebx ; ijlRead
+0x004066fe: 8b 44 24 3c                  mov     eax, [esp+4E4Ch+var_4E10]
+0x00406702: 0f af 44 24 38               imul    eax, [esp+4E4Ch+var_4E14]
+0x00406707: 8d 04 40                     lea     eax, [eax+eax*2]
+0x0040670a: 50                           push    eax; Size
+0x0040670b: e8 4f af 04 00               call    ??2@YAPAXI@Z; operator new(uint)
+0x00406710: 8b 54 24 3c                  mov     edx, [esp+4E50h+var_4E14]
+0x00406714: 83 c4 04                     add     esp, 4
+0x00406717: 8b f8                        mov     edi, eax
+0x00406719: 8b 44 24 3c                  mov     eax, [esp+4E4Ch+var_4E10]
+0x0040671d: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]
+0x00406721: 6a 03                        push    3
+0x00406723: 51                           push    ecx
+0x00406724: 89 54 24 1c                  mov     [esp+4E54h+var_4E38], edx
+0x00406728: 89 44 24 20                  mov     [esp+4E54h+var_4E34], eax
+0x0040672c: c7 44 24 28 03 00 00 00      mov     [esp+4E54h+var_4E2C], 3
+0x00406734: 89 7c 24 18                  mov     [esp+4E54h+var_4E3C], edi
+0x00406738: ff d3                        call    ebx ; ijlRead
+0x0040673a: 8b 4c 24 38                  mov     ecx, [esp+4E4Ch+var_4E14]
+0x0040673e: 8b 44 24 3c                  mov     eax, [esp+4E4Ch+var_4E10]
+0x00406742: 89 7e 24                     mov     [esi+24h], edi
+0x00406745: 89 4e 28                     mov     [esi+28h], ecx
+0x00406748: 89 46 2c                     mov     [esi+2Ch], eax
+0x0040674b: 8b 15 c0 f6 89 00            mov     edx, dword_89F6C0
+0x00406751: 83 7a 3c 10                  cmp     dword ptr [edx+3Ch], 10h
+0x00406755: 75 0c                        jnz     short loc_406763
+0x00406757: 0f af c1                     imul    eax, ecx
+0x0040675a: 50                           push    eax
+0x0040675b: 57                           push    edi
+0x0040675c: e8 7f fe ff ff               call    sub_4065E0
+0x00406761: eb 0a                        jmp     short loc_40676D
+0x00406763: 0f af c1                     imul    eax, ecx
+0x00406766: 50                           push    eax
+0x00406767: 57                           push    edi
+0x00406768: e8 23 fe ff ff               call    sub_406590
+0x0040676d: 8b 44 24 38                  mov     eax, [esp+4E54h+Block]
+0x00406771: 83 c4 08                     add     esp, 8
+0x00406774: 50                           push    eax; Block
+0x00406775: e8 d6 ad 04 00               call    ??3@YAXPAX@Z; operator delete(void *)
+0x0040677a: 83 c4 04                     add     esp, 4
+0x0040677d: 8d 4c 24 0c                  lea     ecx, [esp+4E4Ch+var_4E40]

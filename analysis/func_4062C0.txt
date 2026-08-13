@@ -1,0 +1,10 @@
+sub_4062C0 [0x4062c0, 0x4062d9)
+0x004062c0: 8b 44 24 04                  mov     eax, [esp+arg_0]
+0x004062c4: 85 c0                        test    eax, eax
+0x004062c6: 75 03                        jnz     short loc_4062CB
+0x004062c8: 8b 41 04                     mov     eax, [ecx+4]
+0x004062cb: 8b 08                        mov     ecx, [eax]
+0x004062cd: 6a 00                        push    0
+0x004062cf: 50                           push    eax
+0x004062d0: ff 91 80 00 00 00            call    dword ptr [ecx+80h]
+0x004062d6: c2 04 00                     retn    4

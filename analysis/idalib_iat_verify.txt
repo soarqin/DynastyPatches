@@ -1,0 +1,7 @@
+IDA/idalib IAT verification
+0x00460090: ff ff ff ff extrn GetProcAddress:dword; KERNEL32 name='GetProcAddress'
+0x004600c8: ff ff ff ff extrn GetModuleHandleA:dword; KERNEL32 name='GetModuleHandleA'
+0x0046019c: ff ff ff ff extrn SetCursorPos:dword; USER32 name='SetCursorPos'
+0x004601ec: ff ff ff ff extrn GetWindowLongA:dword; USER32 name='GetWindowLongA'
+0x004601f0: ff ff ff ff extrn ClientToScreen:dword; USER32 name='ClientToScreen'
+0x00460204: ff ff ff ff extrn GetCursorPos:dword; USER32 name='GetCursorPos'

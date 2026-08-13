@@ -1,0 +1,15 @@
+sub_44B9F6 [0x44b9f6, 0x44ba1c)
+0x0044b9f6: 53                           push    ebx
+0x0044b9f7: 2b db                        sub     ebx, ebx
+0x0044b9f9: b9 00 80 00 00               mov     ecx, 8000h
+0x0044b9fe: 8b c3                        mov     eax, ebx
+0x0044ba00: 8b d3                        mov     edx, ebx
+0x0044ba02: d1 e0                        shl     eax, 1
+0x0044ba04: 25 e0 ff 00 00               and     eax, 0FFE0h
+0x0044ba09: 83 e2 1f                     and     edx, 1Fh
+0x0044ba0c: 0b c2                        or      eax, edx
+0x0044ba0e: 66 36 89 04 5d c0 f6 88 00   mov     ss:88F6C0h[ebx*2], ax
+0x0044ba17: 43                           inc     ebx
+0x0044ba18: e2 e4                        loop    loc_44B9FE
+0x0044ba1a: 5b                           pop     ebx
+0x0044ba1b: c3                           retn

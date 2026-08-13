@@ -1,0 +1,46 @@
+# Build and generated output
+build/
+build-*/
+cmake-build-*/
+out/
+Debug/
+Release/
+x64/
+Win32/
+
+# Visual Studio and CMake metadata
+.vs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Compiled artifacts and debug files
+*.exe
+*.dll
+*.lib
+*.exp
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.i64
+*.map
+
+# Local runtime configuration and diagnostics
+CastlePatches.ini
+cursor_diagnostics.txt
+*.dmp
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+analysis/tmp_*
+tools/tmp_*
