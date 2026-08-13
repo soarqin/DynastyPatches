@@ -42,7 +42,7 @@ jobs:
           $version = "${{ steps.release_info.outputs.version }}"
           $escapedVersion = [regex]::Escape($version)
           $changelog = Get-Content "src/CastlePatches/CHANGELOG.md" -Raw
-          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\][^\r\n]*\r?\n(?<notes>.*?)(?=^## |\z)")
+          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\][^\r\n]*\r?\n(?<notes>.*?)(?=^## |^\[[^\]]+\]:|\z)")
           if (-not $match.Success) {
             throw "Unable to find release notes for version $version."
           }
