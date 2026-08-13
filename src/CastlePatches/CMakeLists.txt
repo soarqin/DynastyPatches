@@ -5,7 +5,7 @@ add_executable(CastlePatches WIN32
     CastlePatches.rc
 )
 
-if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
+if(MSVC)
     # RPG.exe is a 32-bit process.  Build the injected runtime DLL with a
     # separate Win32 project even when the launcher itself is x64.
     set(RUNTIME_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/runtime")
@@ -30,6 +30,8 @@ if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
     )
 else()
     add_library(CastleRuntime SHARED runtime/runtime_dll.c)
+    target_compile_options(CastleRuntime PRIVATE -m32)
+    target_link_options(CastleRuntime PRIVATE -m32)
 endif()
 
 target_compile_definitions(CastlePatches PRIVATE
@@ -40,13 +42,14 @@ target_compile_definitions(CastlePatches PRIVATE
 )
 
 if(MSVC)
-    target_compile_options(CastlePatches PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(CastlePatches PRIVATE /W4 /permissive-)
     # The explicit RC manifest contains the Common Controls v6 dependency.
     # Disable MSVC's second auto-generated manifest to avoid duplicate
     # RT_MANIFEST resources at link time.
     target_link_options(CastlePatches PRIVATE /MANIFEST:NO)
 else()
     target_compile_options(CastlePatches PRIVATE -Wall -Wextra -Wpedantic)
+    target_link_options(CastlePatches PRIVATE -municode)
 endif()
 
 target_link_libraries(CastlePatches PRIVATE comdlg32 comctl32)

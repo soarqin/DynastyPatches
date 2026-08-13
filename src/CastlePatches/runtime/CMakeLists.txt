@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(CastleRuntime LANGUAGES C)
 
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_C_EXTENSIONS OFF)
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/../../../cmake")
+include(CustomCompilerOptions)
+
+project(CastleRuntime LANGUAGES C)
 
 add_library(CastleRuntime SHARED
     runtime_dll.c
