@@ -41,6 +41,12 @@ cmake --build build-x64 --config Release
 
 目标游戏为 32 位程序，因此 64 位启动器仍会同时生成兼容的 `CastleRuntime.dll`。
 
+## 发布
+
+CastlePatches 的版本由 `cmake/CastlePatchesVersion.cmake` 统一管理，并写入启动器和运行时 DLL 的 Windows 版本资源。变更记录位于 `src/CastlePatches/CHANGELOG.md`。
+
+推送格式为 `castle-v<版本号>` 的标签会触发 CastlePatches 的发布工作流。工作流仅构建 Win32 版本，并将 `CastlePatches.exe`、`CastleRuntime.dll`、`README.md`、`LICENSE` 和该工具的 `CHANGELOG.md` 打包为 ZIP 附件。其他工具应分别维护自己的变更日志和发布工作流，并使用独立的标签前缀。
+
 ## 使用说明
 
 将 `CastlePatches.exe` 与 `CastleRuntime.dll` 放在同一目录，启动后选择需要的补丁并点击启动按钮。程序会优先查找当前目录下的 `RPG.exe`、`exe/RPG.exe` 和 `Castle/exe/RPG.exe`；均未找到时提供文件选择。

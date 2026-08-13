@@ -1,0 +1,56 @@
+name: Release CastlePatches
+
+on:
+  push:
+    tags:
+      - "castle-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ github.ref_name }}".Substring("castle-v".Length)
+          $versionFile = Get-Content "cmake/CastlePatchesVersion.cmake" -Raw
+          if ($versionFile -notmatch 'set\(CASTLEPATCHES_VERSION "([^"]+)"\)') {
+            throw "Unable to read the CastlePatches version."
+          }
+          if ($tagVersion -ne $Matches[1]) {
+            throw "Tag version $tagVersion does not match CastlePatches version $($Matches[1])."
+          }
+
+      - name: Configure Win32 release build
+        run: cmake -S . -B build-win32 -G "Visual Studio 18 2026" -A Win32
+
+      - name: Build Win32 release
+        run: cmake --build build-win32 --config Release --parallel
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.Substring("castle-v".Length)
+          $packageName = "CastlePatches-$version-win32"
+          $staging = Join-Path $env:RUNNER_TEMP $packageName
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item "build-win32/bin/Release/CastlePatches.exe" $staging
+          Copy-Item "build-win32/bin/Release/CastleRuntime.dll" $staging
+          Copy-Item "README.md" $staging
+          Copy-Item "LICENSE" $staging
+          Copy-Item "src/CastlePatches/CHANGELOG.md" $staging
+          Compress-Archive -Path $staging -DestinationPath "$env:GITHUB_WORKSPACE/$packageName.zip"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: CastlePatches-*-win32.zip

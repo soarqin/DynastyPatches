@@ -1,8 +1,16 @@
-Project(CastlePatches LANGUAGES C)
+include(CastlePatchesVersion)
+project(CastlePatches VERSION ${CASTLEPATCHES_VERSION} LANGUAGES C)
+
+set(CASTLEPATCHES_FILE_TYPE VFT_APP)
+set(CASTLEPATCHES_FILE_DESCRIPTION "Castle Patches Launcher")
+set(CASTLEPATCHES_INTERNAL_NAME "CastlePatches")
+set(CASTLEPATCHES_ORIGINAL_FILENAME "CastlePatches.exe")
+configure_file(CastlePatchesVersion.rc.in CastlePatchesVersion.rc @ONLY)
 
 add_executable(CastlePatches WIN32
     main.c
     CastlePatches.rc
+    "${CMAKE_CURRENT_BINARY_DIR}/CastlePatchesVersion.rc"
 )
 
 if(MSVC)
