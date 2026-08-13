@@ -1410,7 +1410,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
 
     HWND window = CreateWindowExW(WS_EX_APPWINDOW,
                                    window_class.lpszClassName,
-                                   L"Castle Patches",
+                                   L"《天地劫序传 幽城幻剑录》补丁工具",
                                    WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                                    0,
                                    0,
