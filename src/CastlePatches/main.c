@@ -33,6 +33,7 @@ enum {
     ID_EXP_MULTIPLIER_SPIN,
     ID_MONEY_MULTIPLIER,
     ID_MONEY_MULTIPLIER_SPIN,
+    ID_DYNAMIC_ENCOUNTER_RATE,
     ID_LAUNCH,
     ID_STATUS,
 };
@@ -82,6 +83,7 @@ typedef struct LaunchOptions {
     uint32_t scale2;
     uint32_t experience_multiplier;
     uint32_t money_multiplier;
+    bool dynamic_encounter_rate;
 } LaunchOptions;
 
 static HINSTANCE g_instance;
@@ -323,6 +325,7 @@ static void SaveOptions(const LaunchOptions *options) {
     WritePrivateProfileStringW(L"Patches", L"ExperienceMultiplier", multiplier, config_path);
     _snwprintf_s(multiplier, _countof(multiplier), _TRUNCATE, L"%lu", (unsigned long)options->money_multiplier);
     WritePrivateProfileStringW(L"Patches", L"MoneyMultiplier", multiplier, config_path);
+    WritePrivateProfileStringW(L"Patches", L"DynamicEncounterRate", options->dynamic_encounter_rate ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Display", L"Windowed", options->windowed ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Display", L"CursorLock", options->cursor_lock ? L"1" : L"0", config_path);
 
@@ -1187,6 +1190,7 @@ static void Launch(HWND owner) {
         .scale2 = ScaleIndexToValue((int)SendMessageW(g_scale_combo, CB_GETCURSEL, 0, 0)),
         .experience_multiplier = ReadMultiplier(g_experience_multiplier_edit),
         .money_multiplier = ReadMultiplier(g_money_multiplier_edit),
+        .dynamic_encounter_rate = IsChecked(ID_DYNAMIC_ENCOUNTER_RATE),
     };
     SaveOptions(&options);
 
@@ -1206,7 +1210,8 @@ static void Launch(HWND owner) {
         return;
     }
 
-    if ((options.windowed || options.experience_multiplier != 1 || options.money_multiplier != 1) &&
+    if ((options.windowed || options.experience_multiplier != 1 || options.money_multiplier != 1 ||
+         options.dynamic_encounter_rate) &&
         !InjectRuntimeDll(process_info.hProcess)) {
         DWORD error = GetLastError();
         TerminateProcess(process_info.hProcess, 1);
@@ -1287,15 +1292,16 @@ static void CreateControls(HWND window) {
     AddControl(window, L"BUTTON", L"随时存档", BS_AUTOCHECKBOX, 18, 122, 260, 24, ID_ANYWHERE_SAVE);
     AddControl(window, L"BUTTON", L"最大成长", BS_AUTOCHECKBOX, 18, 148, 260, 24, ID_MAX_GROWTH);
     AddControl(window, L"BUTTON", L"最大掉宝", BS_AUTOCHECKBOX, 18, 174, 260, 24, ID_MAX_LOOT);
-    AddControl(window, L"STATIC", L"经验倍率", SS_LEFT, 18, 204, 80, 22, -1);
-    g_experience_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 92, 202, 44, 20, ID_EXP_MULTIPLIER);
-    HWND experience_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 136, 202, 18, 20, ID_EXP_MULTIPLIER_SPIN);
+    AddControl(window, L"BUTTON", L"动态调整遇敌率（Ctrl+F10/F11/F12）", BS_AUTOCHECKBOX, 18, 204, 300, 24, ID_DYNAMIC_ENCOUNTER_RATE);
+    AddControl(window, L"STATIC", L"经验倍率", SS_LEFT, 18, 232, 80, 22, -1);
+    g_experience_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 92, 230, 44, 20, ID_EXP_MULTIPLIER);
+    HWND experience_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 136, 230, 18, 20, ID_EXP_MULTIPLIER_SPIN);
     SendMessageW(experience_spin, UDM_SETBUDDY, (WPARAM)g_experience_multiplier_edit, 0);
     SendMessageW(experience_spin, UDM_SETRANGE32, 1, 10);
     SetDlgItemInt(window, ID_EXP_MULTIPLIER, LoadConfigMultiplier(L"ExperienceMultiplier"), FALSE);
-    AddControl(window, L"STATIC", L"金钱倍率", SS_LEFT, 170, 204, 80, 22, -1);
-    g_money_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 244, 202, 44, 20, ID_MONEY_MULTIPLIER);
-    HWND money_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 288, 202, 18, 20, ID_MONEY_MULTIPLIER_SPIN);
+    AddControl(window, L"STATIC", L"金钱倍率", SS_LEFT, 170, 232, 80, 22, -1);
+    g_money_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 244, 230, 44, 20, ID_MONEY_MULTIPLIER);
+    HWND money_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 288, 230, 18, 20, ID_MONEY_MULTIPLIER_SPIN);
     SendMessageW(money_spin, UDM_SETBUDDY, (WPARAM)g_money_multiplier_edit, 0);
     SendMessageW(money_spin, UDM_SETRANGE32, 1, 10);
     SetDlgItemInt(window, ID_MONEY_MULTIPLIER, LoadConfigMultiplier(L"MoneyMultiplier"), FALSE);
@@ -1317,12 +1323,12 @@ static void CreateControls(HWND window) {
                L"启动时创建已挂起的进程，仅向该进程内存写入补丁。",
                SS_LEFT,
                18,
-                236,
+                262,
                552,
                22,
                -1);
-    AddControl(window, L"BUTTON", L"应用补丁并启动游戏", BS_DEFPUSHBUTTON, 360, 266, 210, 32, ID_LAUNCH);
-    g_status = AddControl(window, L"STATIC", L"等待启动。", SS_LEFT, 18, 274, 330, 22, ID_STATUS);
+    AddControl(window, L"BUTTON", L"应用补丁并启动游戏", BS_DEFPUSHBUTTON, 360, 292, 210, 32, ID_LAUNCH);
+    g_status = AddControl(window, L"STATIC", L"等待启动。", SS_LEFT, 18, 300, 330, 22, ID_STATUS);
 
     CheckDlgButton(window, ID_NO_CD, LoadConfigBool(L"NoCd", true) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_MINGYU_FIX, LoadConfigBool(L"MingyuFix", true) ? BST_CHECKED : BST_UNCHECKED);
@@ -1330,6 +1336,7 @@ static void CreateControls(HWND window) {
     CheckDlgButton(window, ID_ANYWHERE_SAVE, LoadConfigBool(L"AnywhereSave", true) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_MAX_GROWTH, LoadConfigBool(L"MaxGrowth", false) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_MAX_LOOT, LoadConfigBool(L"MaxLoot", false) ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(window, ID_DYNAMIC_ENCOUNTER_RATE, LoadConfigBool(L"DynamicEncounterRate", false) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_WINDOWED, LoadConfigDisplayBool(L"Windowed", false) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_CURSOR_LOCK, LoadConfigDisplayBool(L"CursorLock", false) ? BST_CHECKED : BST_UNCHECKED);
     UpdateWindowedControls(window);
@@ -1415,7 +1422,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR comma
                                    0,
                                    0,
                                    604,
-                                   346,
+                                   372,
                                   NULL,
                                   NULL,
                                   instance,

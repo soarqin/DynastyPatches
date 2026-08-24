@@ -15,11 +15,28 @@
 #define EXPERIENCE_DISPLAY_HOOK_ADDRESS ((uintptr_t)0x004437F7u)
 #define MONEY_GAIN_HOOK_ADDRESS ((uintptr_t)0x00439824u)
 #define MONEY_DISPLAY_HOOK_ADDRESS ((uintptr_t)0x004439AFu)
+#define ENCOUNTER_INITIAL_HOOK_ADDRESS ((uintptr_t)0x004093C7u)
+#define ENCOUNTER_REGENERATION_HOOK_ADDRESS ((uintptr_t)0x00403761u)
+#define ENCOUNTER_THRESHOLD_ADDRESS ((uintptr_t)0x0046F614u)
+#define ENCOUNTER_PROGRESS_ADDRESS ((uintptr_t)0x0046F618u)
+#define ENCOUNTER_MAP_SPECIAL_FLAG_ADDRESS ((uintptr_t)0x0046F624u)
+#define ENCOUNTER_INIT_FUNCTION_ADDRESS ((uintptr_t)0x00403510u)
+#define ENCOUNTER_NEXT_THRESHOLD_ADDRESS ((uintptr_t)0x0044B0D0u)
+#define ENCOUNTER_INITIAL_RETURN_ADDRESS ((uintptr_t)0x004093D3u)
+#define ENCOUNTER_REGENERATION_RETURN_ADDRESS ((uintptr_t)0x00403769u)
+#define ENCOUNTER_REGENERATION_SKIP_ADDRESS ((uintptr_t)0x004037D7u)
+#define ENCOUNTER_HOOK_ALLOCATION_SIZE 0x80u
+#define ENCOUNTER_FEEDBACK_MESSAGE (WM_APP + 0x3A1u)
 #define GAME_CLIENT_WIDTH 640
 #define GAME_CLIENT_HEIGHT 480
 
 typedef BOOL (WINAPI *GetCursorPosFn)(LPPOINT);
 typedef BOOL (WINAPI *SetCursorPosFn)(int, int);
+typedef int (__cdecl *EncounterInitFn)(int);
+
+typedef size_t (*BuildGeneratedHookFn)(uint8_t *buffer, size_t capacity);
+
+static uint32_t GetEncounterRate(void);
 
 static HINSTANCE g_instance;
 static GetCursorPosFn g_original_get_cursor_pos;
@@ -29,9 +46,24 @@ static uint32_t g_scale2 = 2;
 static uint32_t g_experience_multiplier = 1;
 static uint32_t g_money_multiplier = 1;
 static bool g_cursor_lock;
-static HWND g_window;
+static HWND volatile g_window;
 static uint8_t *g_hook_block;
 static size_t g_hook_block_offset;
+static bool g_dynamic_encounter_rate;
+static bool g_windowed;
+static bool g_encounter_map_enabled;
+static wchar_t g_original_window_title[256];
+static WNDPROC g_original_window_proc;
+static volatile LONG g_encounter_rate_percent = 100;
+static volatile LONG g_title_restore_due;
+static volatile LONG g_window_proc_installed;
+
+enum {
+    WINDOW_PROC_NONE = 0,
+    WINDOW_PROC_INSTALLING = 1,
+    WINDOW_PROC_INSTALLED = 2,
+    WINDOW_PROC_DESTROYED = 3,
+};
 
 static bool GetConfigPath(wchar_t *path, size_t capacity) {
     DWORD length = GetModuleFileNameW(g_instance, path, (DWORD)capacity);
@@ -62,13 +94,28 @@ static bool LoadBool(const wchar_t *key, bool default_value) {
     return GetPrivateProfileIntW(L"Display", key, default_value ? 1 : 0, path) != 0;
 }
 
+static bool LoadPatchBool(const wchar_t *key, bool default_value) {
+    wchar_t path[MAX_PATH];
+    if (!GetConfigPath(path, _countof(path))) return default_value;
+    return GetPrivateProfileIntW(L"Patches", key, default_value ? 1 : 0, path) != 0;
+}
+
+static HWND ReadRuntimeWindow(void) {
+    return (HWND)InterlockedCompareExchangePointer((PVOID volatile *)&g_window, NULL, NULL);
+}
+
+static void WriteRuntimeWindow(HWND window) {
+    InterlockedExchangePointer((PVOID volatile *)&g_window, window);
+}
+
 static HWND ReadGameWindow(void) {
     return *(HWND *)(uintptr_t)GAME_WINDOW_HANDLE_ADDRESS;
 }
 
 static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
     if (g_original_get_cursor_pos == NULL || point == NULL || !g_original_get_cursor_pos(point)) return FALSE;
-    HWND window = g_window != NULL ? g_window : ReadGameWindow();
+    HWND window = ReadRuntimeWindow();
+    if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window) || !ScreenToClient(window, point)) return FALSE;
     point->x = (LONG)(((int64_t)point->x * 2) / (int64_t)g_scale2);
     point->y = (LONG)(((int64_t)point->y * 2) / (int64_t)g_scale2);
@@ -77,7 +124,8 @@ static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
 
 static BOOL WINAPI RuntimeSetCursorPos(int x, int y) {
     if (g_original_set_cursor_pos == NULL) return FALSE;
-    HWND window = g_window != NULL ? g_window : ReadGameWindow();
+    HWND window = ReadRuntimeWindow();
+    if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window)) return FALSE;
     POINT point = {
         (LONG)(((int64_t)x * g_scale2) / 2),
@@ -173,6 +221,199 @@ static bool InstallHook(uintptr_t address,
     memcpy(jump + 1, &(int32_t){(int32_t)hook_displacement}, sizeof(int32_t));
     memset(jump + 5, 0x90, expected_length - 5);
     return WriteCode(address, jump, expected_length);
+}
+
+static bool IsEncounterStateInvalid(uint32_t threshold, uint32_t progress);
+
+static uint32_t ScaleEncounterThreshold(uint32_t threshold, uint32_t rate) {
+    if (rate == 0) return 0;
+    uint64_t scaled = ((uint64_t)threshold * 100u + rate - 1u) / rate;
+    if (scaled == 0) scaled = 1;
+    return scaled > UINT32_MAX ? UINT32_MAX : (uint32_t)scaled;
+}
+
+static void ApplyEncounterThresholdRate(void) {
+    uint32_t rate = (uint32_t)InterlockedCompareExchange(&g_encounter_rate_percent, 0, 0);
+    volatile uint32_t *threshold = (volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
+    volatile uint32_t *progress = (volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
+    if (IsEncounterStateInvalid(*threshold, *progress)) {
+        OutputDebugStringW(L"CastleRuntime: invalid encounter state in threshold hook; resetting\n");
+        *progress = 0;
+        if (rate == 0 || !g_encounter_map_enabled) {
+            *threshold = 0;
+            return;
+        }
+        ((EncounterInitFn)ENCOUNTER_INIT_FUNCTION_ADDRESS)(1);
+    }
+    *threshold = ScaleEncounterThreshold(*threshold, rate);
+}
+
+static bool IsEncounterStateInvalid(uint32_t threshold, uint32_t progress) {
+    if (threshold > 0x100000u || progress > 0x100000u) return true;
+    if (threshold == 0) return progress != 0;
+    return progress > threshold + 2u;
+}
+
+static void ResetInvalidEncounterState(void) {
+    volatile uint32_t *threshold = (volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
+    volatile uint32_t *progress = (volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
+    uint32_t rate = GetEncounterRate();
+    OutputDebugStringW(L"CastleRuntime: invalid encounter state; resetting\n");
+    *progress = 0;
+    if (rate == 0 || !g_encounter_map_enabled) {
+        *threshold = 0;
+        return;
+    }
+    ((EncounterInitFn)ENCOUNTER_INIT_FUNCTION_ADDRESS)(1);
+    ApplyEncounterThresholdRate();
+}
+
+static void ApplyEncounterInitialRate(uint32_t map_record) {
+    g_encounter_map_enabled = *(const uint32_t *)(uintptr_t)(map_record + 0x378u) != 0;
+    ApplyEncounterThresholdRate();
+}
+
+static bool EmitEncounterByte(uint8_t *buffer, size_t capacity, size_t *offset, uint8_t value) {
+    if (*offset >= capacity) return false;
+    buffer[(*offset)++] = value;
+    return true;
+}
+
+static bool EmitEncounterDword(uint8_t *buffer, size_t capacity, size_t *offset, uint32_t value) {
+    if (*offset > capacity - sizeof(value)) return false;
+    memcpy(buffer + *offset, &value, sizeof(value));
+    *offset += sizeof(value);
+    return true;
+}
+
+static bool EmitEncounterAbsoluteCall(uint8_t *buffer,
+                                      size_t capacity,
+                                      size_t *offset,
+                                      uintptr_t target) {
+    return EmitEncounterByte(buffer, capacity, offset, 0xB8) &&
+           EmitEncounterDword(buffer, capacity, offset, (uint32_t)target) &&
+           EmitEncounterByte(buffer, capacity, offset, 0xFF) &&
+           EmitEncounterByte(buffer, capacity, offset, 0xD0);
+}
+
+static bool EmitEncounterPushImm(uint8_t *buffer,
+                                 size_t capacity,
+                                 size_t *offset,
+                                 uintptr_t value) {
+    return EmitEncounterByte(buffer, capacity, offset, 0x68) &&
+           EmitEncounterDword(buffer, capacity, offset, (uint32_t)value);
+}
+
+static size_t BuildEncounterInitialHook(uint8_t *buffer, size_t capacity) {
+    size_t offset = 0;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x60) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x53) ||
+        !EmitEncounterAbsoluteCall(buffer, capacity, &offset, (uintptr_t)&ApplyEncounterInitialRate) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x83) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC4) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x04) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x61) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x7C) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x03) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x00) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x00) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x51) ||
+        !EmitEncounterAbsoluteCall(buffer, capacity, &offset, ENCOUNTER_NEXT_THRESHOLD_ADDRESS) ||
+        !EmitEncounterPushImm(buffer, capacity, &offset, ENCOUNTER_INITIAL_RETURN_ADDRESS) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC3)) {
+        return 0;
+    }
+    return offset;
+}
+
+static size_t BuildEncounterRegenerationHook(uint8_t *buffer, size_t capacity) {
+    size_t offset = 0;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x60) ||
+        !EmitEncounterAbsoluteCall(buffer, capacity, &offset, (uintptr_t)&ApplyEncounterThresholdRate) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x61) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x38) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x1D) ||
+        !EmitEncounterDword(buffer, capacity, &offset, (uint32_t)ENCOUNTER_MAP_SPECIAL_FLAG_ADDRESS) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x75) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x06) ||
+        !EmitEncounterPushImm(buffer, capacity, &offset, ENCOUNTER_REGENERATION_SKIP_ADDRESS) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC3) ||
+        !EmitEncounterPushImm(buffer, capacity, &offset, ENCOUNTER_REGENERATION_RETURN_ADDRESS) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC3)) {
+        return 0;
+    }
+    return offset;
+}
+
+static bool InstallGeneratedHook(uintptr_t address,
+                                 const uint8_t *expected,
+                                 size_t expected_length,
+                                 BuildGeneratedHookFn builder) {
+    if (expected_length < 5u || expected_length > 16u ||
+        memcmp((const void *)address, expected, expected_length) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
+    uint8_t *remote = AllocateHookCode(ENCOUNTER_HOOK_ALLOCATION_SIZE, address);
+    if (remote == NULL) return false;
+
+    uint8_t code[ENCOUNTER_HOOK_ALLOCATION_SIZE] = {0};
+    size_t code_length = builder(code, sizeof(code));
+    if (code_length == 0) {
+        SetLastError(ERROR_BUFFER_OVERFLOW);
+        return false;
+    }
+
+    DWORD old_protection = 0;
+    if (!VirtualProtect(remote, code_length, PAGE_READWRITE, &old_protection)) return false;
+    memcpy(remote, code, code_length);
+    DWORD ignored = 0;
+    if (!VirtualProtect(remote, code_length, PAGE_EXECUTE_READ, &ignored)) return false;
+
+    int64_t displacement = (int64_t)(uintptr_t)remote - (int64_t)(address + 5u);
+    if (displacement < INT32_MIN || displacement > INT32_MAX) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return false;
+    }
+
+    uint8_t jump[16] = {0xE9};
+    memcpy(jump + 1, &(int32_t){(int32_t)displacement}, sizeof(int32_t));
+    memset(jump + 5, 0x90, expected_length - 5u);
+    return WriteCode(address, jump, expected_length);
+}
+
+static DWORD InstallEncounterHooks(void) {
+    static const uint8_t initial_expected[] = {
+        0x8B, 0x8B, 0x7C, 0x03, 0x00, 0x00,
+        0x51,
+        0xE8, 0xFD, 0x1C, 0x04, 0x00,
+    };
+    static const uint8_t regeneration_expected[] = {
+        0x38, 0x1D, 0x24, 0xF6, 0x46, 0x00,
+        0x74, 0x6E,
+    };
+
+    if (memcmp((const void *)ENCOUNTER_INITIAL_HOOK_ADDRESS,
+               initial_expected,
+               sizeof(initial_expected)) != 0 ||
+        memcmp((const void *)ENCOUNTER_REGENERATION_HOOK_ADDRESS,
+               regeneration_expected,
+               sizeof(regeneration_expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return 231;
+    }
+
+    if (!InstallGeneratedHook(ENCOUNTER_INITIAL_HOOK_ADDRESS,
+                              initial_expected,
+                              sizeof(initial_expected),
+                              BuildEncounterInitialHook)) return 232;
+    if (!InstallGeneratedHook(ENCOUNTER_REGENERATION_HOOK_ADDRESS,
+                              regeneration_expected,
+                              sizeof(regeneration_expected),
+                              BuildEncounterRegenerationHook)) return 233;
+    return 1;
 }
 
 static DWORD InstallSettlementHooks(void) {
@@ -284,23 +525,227 @@ static void ResizeGameWindow(HWND window) {
     MoveWindow(window, x, y, width, height, TRUE);
 }
 
+static const uint32_t kEncounterRates[] = {0, 50, 75, 100, 150, 200, 300};
+
+static size_t FindEncounterRateIndex(uint32_t rate) {
+    for (size_t index = 0; index < _countof(kEncounterRates); ++index) {
+        if (kEncounterRates[index] == rate) return index;
+    }
+    return 3;
+}
+
+static uint32_t GetEncounterRate(void) {
+    uint32_t rate = (uint32_t)InterlockedCompareExchange(&g_encounter_rate_percent, 0, 0);
+    size_t index = FindEncounterRateIndex(rate);
+    if (kEncounterRates[index] != rate) {
+        OutputDebugStringW(L"CastleRuntime: invalid encounter rate; restoring 100%\n");
+        InterlockedExchange(&g_encounter_rate_percent, 100);
+        return 100;
+    }
+    return rate;
+}
+
+static uint32_t ScaleEncounterStateValue(uint32_t value,
+                                         uint32_t old_rate,
+                                         uint32_t new_rate,
+                                         bool round_up) {
+    uint64_t scaled = (uint64_t)value * old_rate;
+    if (round_up) scaled += new_rate - 1u;
+    scaled /= new_rate;
+    return scaled > UINT32_MAX ? UINT32_MAX : (uint32_t)scaled;
+}
+
+static void ShowEncounterRateFeedback(uint32_t rate, uint32_t old_rate) {
+    uint32_t threshold = *(volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
+    uint32_t progress = *(volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
+    wchar_t message[192];
+    _snwprintf_s(message,
+                 _countof(message),
+                 _TRUNCATE,
+                 L"CastleRuntime: encounter rate %lu%% -> %lu%%, threshold=%lu, progress=%lu\n",
+                 (unsigned long)old_rate,
+                 (unsigned long)rate,
+                 (unsigned long)threshold,
+                 (unsigned long)progress);
+    OutputDebugStringW(message);
+
+    if (g_windowed) {
+        HWND window = ReadRuntimeWindow();
+        wchar_t title[256];
+        _snwprintf_s(title,
+                     _countof(title),
+                     _TRUNCATE,
+                     L"遇敌率：%lu%%",
+                     (unsigned long)rate);
+        if (window != NULL) SetWindowTextW(window, title);
+        InterlockedExchange(&g_title_restore_due, (LONG)(GetTickCount() + 1500u));
+    } else {
+        MessageBeep(MB_OK);
+    }
+}
+
+static void SetEncounterRate(uint32_t requested_rate) {
+    uint32_t old_rate = GetEncounterRate();
+    uint32_t rate = kEncounterRates[FindEncounterRateIndex(requested_rate)];
+    volatile uint32_t *threshold = (volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
+    volatile uint32_t *progress = (volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
+
+    if (IsEncounterStateInvalid(*threshold, *progress) ||
+        (old_rate == 0 && *threshold != 0)) {
+        ResetInvalidEncounterState();
+    }
+
+    if (old_rate == rate) {
+        ShowEncounterRateFeedback(rate, old_rate);
+        return;
+    }
+
+    if (rate == 0) {
+        *threshold = 0;
+        *progress = 0;
+        InterlockedExchange(&g_encounter_rate_percent, 0);
+    } else if (old_rate == 0) {
+        InterlockedExchange(&g_encounter_rate_percent, (LONG)rate);
+        if (g_encounter_map_enabled) {
+            ((EncounterInitFn)ENCOUNTER_INIT_FUNCTION_ADDRESS)(1);
+            ApplyEncounterThresholdRate();
+        } else {
+            *threshold = 0;
+            *progress = 0;
+        }
+    } else {
+        uint32_t old_threshold = *threshold;
+        uint32_t old_progress = *progress;
+        if (old_threshold != 0) {
+            uint32_t new_threshold = ScaleEncounterStateValue(old_threshold, old_rate, rate, true);
+            uint32_t new_progress = ScaleEncounterStateValue(old_progress, old_rate, rate, false);
+            if (new_threshold == 0) new_threshold = 1;
+            if (new_progress >= new_threshold) new_progress = new_threshold - 1;
+            *threshold = new_threshold;
+            *progress = new_progress;
+        }
+        InterlockedExchange(&g_encounter_rate_percent, (LONG)rate);
+    }
+
+    ShowEncounterRateFeedback(rate, old_rate);
+}
+
+static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
+                                               UINT message,
+                                               WPARAM w_param,
+                                               LPARAM l_param) {
+    if (message == ENCOUNTER_FEEDBACK_MESSAGE) {
+        if (InterlockedCompareExchange(&g_window_proc_installed, 0, 0) == WINDOW_PROC_INSTALLED &&
+            InterlockedCompareExchange(&g_title_restore_due, 0, 0) == 0) {
+            SetWindowTextW(window, g_original_window_title);
+        }
+        return 0;
+    }
+
+    if ((message == WM_KEYDOWN || message == WM_SYSKEYDOWN) &&
+        (GetKeyState(VK_CONTROL) & 0x8000) != 0 &&
+        (l_param & (1u << 30)) == 0) {
+        size_t index = FindEncounterRateIndex(GetEncounterRate());
+        if (w_param == VK_F10) {
+            SetEncounterRate(100);
+            return 0;
+        }
+        if (w_param == VK_F11) {
+            index = index == 0 ? _countof(kEncounterRates) - 1u : index - 1u;
+            SetEncounterRate(kEncounterRates[index]);
+            return 0;
+        }
+        if (w_param == VK_F12) {
+            index = (index + 1u) % _countof(kEncounterRates);
+            SetEncounterRate(kEncounterRates[index]);
+            return 0;
+        }
+    }
+
+    if (message == WM_NCDESTROY) {
+        InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_DESTROYED);
+        WriteRuntimeWindow(NULL);
+    }
+    if (g_original_window_proc == NULL) return DefWindowProcW(window, message, w_param, l_param);
+    LRESULT result = CallWindowProcW(g_original_window_proc, window, message, w_param, l_param);
+    return result;
+}
+
+static bool InstallEncounterWindowProcedure(void) {
+    HWND window = ReadRuntimeWindow();
+    if (window == NULL || !IsWindow(window)) return false;
+    InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_INSTALLING);
+    GetWindowTextW(window, g_original_window_title, (int)_countof(g_original_window_title));
+    g_original_window_proc = DefWindowProcW;
+    SetLastError(ERROR_SUCCESS);
+    WNDPROC original = (WNDPROC)SetWindowLongPtrW(window,
+                                                  GWLP_WNDPROC,
+                                                  (LONG_PTR)RuntimeWindowProcedure);
+    if (original == NULL && GetLastError() != ERROR_SUCCESS) {
+        InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_NONE);
+        return false;
+    }
+    g_original_window_proc = original;
+    return InterlockedCompareExchange(&g_window_proc_installed,
+                                      WINDOW_PROC_INSTALLED,
+                                      WINDOW_PROC_INSTALLING) == WINDOW_PROC_INSTALLING;
+}
+
+static void ProcessEncounterTitleFeedback(void) {
+    if (InterlockedCompareExchange(&g_window_proc_installed, 0, 0) != WINDOW_PROC_INSTALLED || !g_windowed) return;
+    HWND window = ReadRuntimeWindow();
+    if (window == NULL) return;
+    LONG due = InterlockedCompareExchange(&g_title_restore_due, 0, 0);
+    if (due == 0 || (LONG)(GetTickCount() - (DWORD)due) < 0) return;
+    if (PostMessageW(window, ENCOUNTER_FEEDBACK_MESSAGE, 0, 0)) {
+        InterlockedCompareExchange(&g_title_restore_due, 0, due);
+    }
+}
+
 static DWORD WINAPI RuntimeWorker(void *parameter) {
     (void)parameter;
     g_scale2 = LoadScale();
+    g_windowed = LoadBool(L"Windowed", false);
     g_cursor_lock = LoadBool(L"CursorLock", false);
     for (int attempt = 0; attempt < 400; ++attempt) {
         HWND window = ReadGameWindow();
         if (window != NULL && IsWindow(window)) {
-            g_window = window;
+            WriteRuntimeWindow(window);
             break;
         }
         Sleep(25);
     }
-    if (g_window == NULL) return 0;
-    for (int attempt = 0; attempt < 20 && IsWindow(g_window); ++attempt) {
-        ResizeGameWindow(g_window);
-        InstallCursorHooks();
+    if (ReadRuntimeWindow() == NULL && g_dynamic_encounter_rate) {
+        OutputDebugStringW(L"CastleRuntime: game window was not created within 10 seconds; continuing to wait\n");
+        for (;;) {
+            HWND window = ReadGameWindow();
+            if (window != NULL && IsWindow(window)) {
+                WriteRuntimeWindow(window);
+                break;
+            }
+            Sleep(25);
+        }
+    }
+    if (ReadRuntimeWindow() == NULL) return 0;
+    if (g_dynamic_encounter_rate && !InstallEncounterWindowProcedure()) {
+        OutputDebugStringW(L"CastleRuntime: failed to install encounter hotkey window procedure\n");
+        g_dynamic_encounter_rate = false;
+    }
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        HWND window = ReadRuntimeWindow();
+        if (window == NULL || !IsWindow(window)) break;
+        if (g_windowed) {
+            ResizeGameWindow(window);
+            InstallCursorHooks();
+        }
+        ProcessEncounterTitleFeedback();
         Sleep(100);
+    }
+    while (g_dynamic_encounter_rate) {
+        HWND window = ReadRuntimeWindow();
+        if (window == NULL || !IsWindow(window)) break;
+        ProcessEncounterTitleFeedback();
+        Sleep(25);
     }
     return 0;
 }
@@ -308,9 +753,14 @@ static DWORD WINAPI RuntimeWorker(void *parameter) {
 __declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
     g_experience_multiplier = LoadMultiplier(L"ExperienceMultiplier");
     g_money_multiplier = LoadMultiplier(L"MoneyMultiplier");
+    g_dynamic_encounter_rate = LoadPatchBool(L"DynamicEncounterRate", false);
     DWORD settlement_result = InstallSettlementHooks();
     if (settlement_result != 1) return settlement_result;
-    if (!LoadBool(L"Windowed", false)) return 1;
+    if (g_dynamic_encounter_rate) {
+        DWORD encounter_result = InstallEncounterHooks();
+        if (encounter_result != 1) return encounter_result;
+    }
+    if (!LoadBool(L"Windowed", false) && !g_dynamic_encounter_rate) return 1;
     HANDLE thread = CreateThread(NULL, 0, RuntimeWorker, NULL, 0, NULL);
     if (thread == NULL) return 0;
     CloseHandle(thread);
