@@ -42,5 +42,5 @@ cursor_diagnostics.txt
 *.tmp
 *.log
 *.bak
-analysis/tmp_*
-tools/tmp_*
+/analysis/
+/tools/

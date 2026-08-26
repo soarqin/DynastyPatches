@@ -616,6 +616,58 @@ static bool InstallSurfaceFormatHook(HANDLE process) {
     return true;
 }
 
+static bool InstallFullscreenVblankHook(HANDLE process) {
+    static const uint8_t expected[] = {0x8B, 0x76, 0x04, 0x6A, 0x01};
+    uint8_t hook[64] = {
+        0x60,                         /* pushad */
+        0x8B, 0x44, 0x24, 0x04,       /* mov eax,[esp+4] (saved ESI) */
+        0x8B, 0x00,                   /* mov eax,[eax] (IDirectDraw interface) */
+        0x8B, 0x08,                   /* mov ecx,[eax] (vtable) */
+        0x50,                         /* push this */
+        0x6A, 0x00,                   /* push NULL event */
+        0x6A, 0x01,                   /* push DDWAITVB_BLOCKBEGIN */
+        0xFF, 0x51, 0x58,             /* call [ecx+58h] */
+        0x61,                         /* popad */
+        0x8B, 0x76, 0x04,             /* original mov esi,[esi+4] */
+        0x6A, 0x01,                   /* original push 1 */
+        0xE9, 0, 0, 0, 0,             /* return to 4064F2 */
+    };
+    uint8_t current[sizeof(expected)];
+    if (!ReadProcessExact(process, 0x004064EDu, current, sizeof(current)) ||
+        memcmp(current, expected, sizeof(expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
+    LPVOID remote = VirtualAllocEx(process, NULL, sizeof(hook), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (remote == NULL || (uintptr_t)remote > UINT32_MAX) {
+        if (remote != NULL) VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return false;
+    }
+    int32_t return_displacement = (int32_t)0x004064F2u -
+                                  (int32_t)((uintptr_t)remote + 28u);
+    memcpy(hook + 24, &return_displacement, sizeof(return_displacement));
+    SIZE_T written = 0;
+    if (!WriteProcessMemory(process, remote, hook, 28, &written) || written != 28) {
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return false;
+    }
+    DWORD old_protection = 0;
+    if (!VirtualProtectEx(process, remote, 28, PAGE_EXECUTE_READ, &old_protection)) {
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return false;
+    }
+    uint8_t jump[sizeof(expected)] = {0xE9, 0, 0, 0, 0};
+    int32_t displacement = (int32_t)(uintptr_t)remote - (int32_t)0x004064F2u;
+    memcpy(jump + 1, &displacement, sizeof(displacement));
+    if (!WriteProtected(process, 0x004064EDu, jump, sizeof(jump))) {
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return false;
+    }
+    FlushInstructionCache(process, remote, 28);
+    return true;
+}
+
 /* The original movie path always locks renderer+4 (Primary) and uses the
    Primary pitch.  That is valid in exclusive full-screen mode, but under
    DDSCL_NORMAL the Primary uses the desktop format while our game buffers
@@ -1093,6 +1145,9 @@ static bool ApplySelectedPatches(HANDLE process,
     }
 
     if (!options->windowed) {
+        if (LoadConfigDisplayBool(L"FullscreenVSync", false)) {
+            if (!InstallFullscreenVblankHook(process)) return false;
+        }
         return true;
     }
 

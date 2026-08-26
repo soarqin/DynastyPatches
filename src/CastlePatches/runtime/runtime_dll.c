@@ -223,6 +223,103 @@ static bool InstallHook(uintptr_t address,
     return WriteCode(address, jump, expected_length);
 }
 
+/*
+static void __cdecl PresentProbeEnter(void) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    g_present_enter = now;
+    if (g_present_previous.QuadPart != 0) {
+        uint64_t interval = (uint64_t)(now.QuadPart - g_present_previous.QuadPart);
+        g_present_interval_total += interval;
+        if (interval < g_present_interval_min) g_present_interval_min = interval;
+        if (interval > g_present_interval_max) g_present_interval_max = interval;
+    }
+    g_present_previous = now;
+}
+
+static double CounterMilliseconds(uint64_t ticks) {
+    return (double)ticks * 1000.0 / (double)g_present_frequency.QuadPart;
+}
+
+static void __cdecl PresentProbeExit(void) {
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    uint64_t duration = (uint64_t)(now.QuadPart - g_present_enter.QuadPart);
+    g_present_duration_total += duration;
+    if (duration > g_present_duration_max) g_present_duration_max = duration;
+    ++g_present_samples;
+    if (g_present_samples < 100) return;
+
+    uint32_t intervals = g_present_samples - 1u;
+    wchar_t message[256];
+    _snwprintf_s(message,
+                 _countof(message),
+                 _TRUNCATE,
+                 L"CastleRuntime: present samples=%lu interval_ms(avg/min/max)=%.3f/%.3f/%.3f duration_ms(avg/max)=%.3f/%.3f\n",
+                 (unsigned long)g_present_samples,
+                 intervals != 0 ? CounterMilliseconds(g_present_interval_total) / intervals : 0.0,
+                 CounterMilliseconds(g_present_interval_min == UINT64_MAX ? 0 : g_present_interval_min),
+                 CounterMilliseconds(g_present_interval_max),
+                 CounterMilliseconds(g_present_duration_total) / g_present_samples,
+                 CounterMilliseconds(g_present_duration_max));
+    OutputDebugStringW(message);
+
+    g_present_interval_total = 0;
+    g_present_duration_total = 0;
+    g_present_interval_min = UINT64_MAX;
+    g_present_interval_max = 0;
+    g_present_duration_max = 0;
+    g_present_samples = 0;
+    g_present_previous.QuadPart = 0;
+}
+
+static bool InstallFramePacingDiagnostics(void) {
+    static const uint8_t expected[] = {0xE8, 0xB1, 0x0A, 0x00, 0x00};
+    uint8_t code[] = {
+        0x9C, 0x60, 0xB8, 0, 0, 0, 0, 0xFF, 0xD0, 0x61, 0x9D,
+        0xB8, 0, 0, 0, 0, 0xFF, 0xD0,
+        0x9C, 0x60, 0xB8, 0, 0, 0, 0, 0xFF, 0xD0, 0x61, 0x9D,
+        0xE9, 0, 0, 0, 0,
+    };
+    memcpy(code + 3, &(uint32_t){(uint32_t)(uintptr_t)PresentProbeEnter}, sizeof(uint32_t));
+    memcpy(code + 12, &(uint32_t){(uint32_t)PRESENT_FUNCTION_ADDRESS}, sizeof(uint32_t));
+    memcpy(code + 21, &(uint32_t){(uint32_t)(uintptr_t)PresentProbeExit}, sizeof(uint32_t));
+    if (!QueryPerformanceFrequency(&g_present_frequency) || g_present_frequency.QuadPart == 0) return false;
+    return InstallHook(PRESENT_CALL_HOOK_ADDRESS,
+                       expected,
+                       sizeof(expected),
+                       code,
+                       sizeof(code),
+                       30);
+}
+
+static void LogDisplayEnvironment(void) {
+    typedef HRESULT (WINAPI *DwmIsCompositionEnabledFn)(BOOL *enabled);
+    BOOL composition_enabled = FALSE;
+    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
+    if (dwmapi != NULL) {
+        DwmIsCompositionEnabledFn is_composition_enabled =
+            (DwmIsCompositionEnabledFn)(uintptr_t)GetProcAddress(dwmapi, "DwmIsCompositionEnabled");
+        if (is_composition_enabled != NULL) is_composition_enabled(&composition_enabled);
+        FreeLibrary(dwmapi);
+    }
+
+    DEVMODEW mode = {.dmSize = sizeof(mode)};
+    BOOL have_mode = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &mode);
+    wchar_t message[192];
+    _snwprintf_s(message,
+                 _countof(message),
+                 _TRUNCATE,
+                 L"CastleRuntime: frame pacing diagnostics enabled; DWM=%ls display=%lux%lu %luHz %lubpp\n",
+                 composition_enabled ? L"on" : L"off/unknown",
+                 (unsigned long)(have_mode ? mode.dmPelsWidth : 0),
+                 (unsigned long)(have_mode ? mode.dmPelsHeight : 0),
+                 (unsigned long)(have_mode ? mode.dmDisplayFrequency : 0),
+                 (unsigned long)(have_mode ? mode.dmBitsPerPel : 0));
+    OutputDebugStringW(message);
+}
+
+*/
 static bool IsEncounterStateInvalid(uint32_t threshold, uint32_t progress);
 
 static uint32_t ScaleEncounterThreshold(uint32_t threshold, uint32_t rate) {

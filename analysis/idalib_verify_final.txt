@@ -1,4 +1,0 @@
-Function request 0x0043df30
-  no function
-Function request 0x00408830
-  no function
