@@ -1,4 +1,6 @@
 #include <windows.h>
+#include <ddraw.h>
+#include <dbghelp.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -9,6 +11,22 @@
 #endif
 
 #define GAME_WINDOW_HANDLE_ADDRESS ((uintptr_t)0x0046F384u)
+#define RENDERER_GLOBAL_ADDRESS ((uintptr_t)0x0089F6C0u)
+#define RENDERER_WIDTH_HOOK_ADDRESS ((uintptr_t)0x0040157Fu)
+#define MAP_RENDER_HOOK_ADDRESS ((uintptr_t)0x0040B050u)
+#define MAP_CAMERA_LEFT_ADDRESS ((uintptr_t)0x0044B383u)
+#define MAP_CAMERA_RIGHT_ADDRESS ((uintptr_t)0x0044B3B4u)
+#define MAP_CAMERA_LEFT_REPOSITION_ADDRESS ((uintptr_t)0x0044B38Fu)
+#define MAP_CAMERA_RIGHT_REPOSITION_ADDRESS ((uintptr_t)0x0044B3C0u)
+#define PRESENT_FUNCTION_ADDRESS ((uintptr_t)0x004064E0u)
+#define BINK_FRAME_FUNCTION_ADDRESS ((uintptr_t)0x00401BA0u)
+#define EFFECT_STRIDE_1_ADDRESS ((uintptr_t)0x00406E11u)
+#define EFFECT_STRIDE_2_ADDRESS ((uintptr_t)0x00406E4Fu)
+#define EFFECT_STRIDE_3_ADDRESS ((uintptr_t)0x00406E82u)
+#define EFFECT_STRIDE_4_ADDRESS ((uintptr_t)0x00406E9Au)
+#define EFFECT_RIGHT_1_ADDRESS ((uintptr_t)0x00406E02u)
+#define EFFECT_RIGHT_2_ADDRESS ((uintptr_t)0x00406E40u)
+#define EFFECT_RIGHT_3_ADDRESS ((uintptr_t)0x00406E68u)
 #define SET_CURSOR_POS_IAT_ADDRESS ((uintptr_t)0x0046019Cu)
 #define GET_CURSOR_POS_IAT_ADDRESS ((uintptr_t)0x00460204u)
 #define EXPERIENCE_GAIN_HOOK_ADDRESS ((uintptr_t)0x00443856u)
@@ -29,10 +47,13 @@
 #define ENCOUNTER_FEEDBACK_MESSAGE (WM_APP + 0x3A1u)
 #define GAME_CLIENT_WIDTH 640
 #define GAME_CLIENT_HEIGHT 480
+#define WIDESCREEN_CLIENT_WIDTH 864
+#define WIDESCREEN_CLIENT_HEIGHT 480
 
 typedef BOOL (WINAPI *GetCursorPosFn)(LPPOINT);
 typedef BOOL (WINAPI *SetCursorPosFn)(int, int);
 typedef int (__cdecl *EncounterInitFn)(int);
+typedef void (__fastcall *PresentFn)(void *renderer);
 
 typedef size_t (*BuildGeneratedHookFn)(uint8_t *buffer, size_t capacity);
 
@@ -49,14 +70,21 @@ static bool g_cursor_lock;
 static HWND volatile g_window;
 static uint8_t *g_hook_block;
 static size_t g_hook_block_offset;
+static uint8_t *g_last_hook_code;
+static PresentFn g_original_present;
 static bool g_dynamic_encounter_rate;
 static bool g_windowed;
+static bool g_widescreen;
 static bool g_encounter_map_enabled;
+static LPTOP_LEVEL_EXCEPTION_FILTER g_previous_exception_filter;
 static wchar_t g_original_window_title[256];
 static WNDPROC g_original_window_proc;
 static volatile LONG g_encounter_rate_percent = 100;
 static volatile LONG g_title_restore_due;
 static volatile LONG g_window_proc_installed;
+static volatile LONG g_map_frame;
+static volatile LONG g_map_active;
+static volatile LONG g_bink_frame;
 
 enum {
     WINDOW_PROC_NONE = 0,
@@ -112,11 +140,94 @@ static HWND ReadGameWindow(void) {
     return *(HWND *)(uintptr_t)GAME_WINDOW_HANDLE_ADDRESS;
 }
 
+static LONG WINAPI RuntimeUnhandledExceptionFilter(EXCEPTION_POINTERS *exception) {
+    wchar_t path[MAX_PATH];
+    DWORD length = GetModuleFileNameW(NULL, path, _countof(path));
+    if (length != 0 && length < _countof(path)) {
+        wchar_t *slash = wcsrchr(path, L'\\');
+        if (slash != NULL) {
+            DWORD pid = GetCurrentProcessId();
+            _snwprintf_s(slash + 1,
+                         (size_t)(path + _countof(path) - slash - 1),
+                         _TRUNCATE,
+                         L"CastleRuntime-crash-%lu.dmp",
+                         (unsigned long)pid);
+            HANDLE dump = CreateFileW(path,
+                                       GENERIC_WRITE,
+                                       0,
+                                       NULL,
+                                       CREATE_ALWAYS,
+                                       FILE_ATTRIBUTE_NORMAL,
+                                       NULL);
+            if (dump != INVALID_HANDLE_VALUE) {
+                MINIDUMP_EXCEPTION_INFORMATION info = {
+                    GetCurrentThreadId(),
+                    exception,
+                    FALSE,
+                };
+                MiniDumpWriteDump(GetCurrentProcess(),
+                                  pid,
+                                  dump,
+                                  MiniDumpWithIndirectlyReferencedMemory,
+                                  exception != NULL ? &info : NULL,
+                                  NULL,
+                                  NULL);
+                CloseHandle(dump);
+            }
+        }
+    }
+    if (g_previous_exception_filter != NULL) return g_previous_exception_filter(exception);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static bool IsMapActive(void) {
+    return InterlockedCompareExchange(&g_map_active, 0, 0) != 0;
+}
+
+static bool GetFixedViewport(HWND window, RECT *viewport) {
+    RECT client;
+    if (viewport == NULL || !GetClientRect(window, &client)) return false;
+    LONG client_width = client.right - client.left;
+    LONG client_height = client.bottom - client.top;
+    if (client_width <= 0 || client_height <= 0) return false;
+
+    LONG width;
+    LONG height;
+    if ((int64_t)client_width * 3 >= (int64_t)client_height * 4) {
+        height = client_height;
+        width = (LONG)(((int64_t)height * 4) / 3);
+    } else {
+        width = client_width;
+        height = (LONG)(((int64_t)width * 3) / 4);
+    }
+    viewport->left = (client_width - width) / 2;
+    viewport->top = (client_height - height) / 2;
+    viewport->right = viewport->left + width;
+    viewport->bottom = viewport->top + height;
+    return true;
+}
+
 static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
     if (g_original_get_cursor_pos == NULL || point == NULL || !g_original_get_cursor_pos(point)) return FALSE;
     HWND window = ReadRuntimeWindow();
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window) || !ScreenToClient(window, point)) return FALSE;
+
+    if (g_widescreen && !IsMapActive()) {
+        RECT viewport;
+        if (!GetFixedViewport(window, &viewport)) return FALSE;
+        if (!PtInRect(&viewport, *point)) {
+            point->x = -1;
+            point->y = -1;
+            return TRUE;
+        }
+        point->x = (LONG)(((int64_t)(point->x - viewport.left) * GAME_CLIENT_WIDTH) /
+                          (viewport.right - viewport.left));
+        point->y = (LONG)(((int64_t)(point->y - viewport.top) * GAME_CLIENT_HEIGHT) /
+                          (viewport.bottom - viewport.top));
+        return TRUE;
+    }
+
     point->x = (LONG)(((int64_t)point->x * 2) / (int64_t)g_scale2);
     point->y = (LONG)(((int64_t)point->y * 2) / (int64_t)g_scale2);
     return TRUE;
@@ -127,10 +238,18 @@ static BOOL WINAPI RuntimeSetCursorPos(int x, int y) {
     HWND window = ReadRuntimeWindow();
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window)) return FALSE;
-    POINT point = {
-        (LONG)(((int64_t)x * g_scale2) / 2),
-        (LONG)(((int64_t)y * g_scale2) / 2),
-    };
+    POINT point;
+    if (g_widescreen && !IsMapActive()) {
+        RECT viewport;
+        if (!GetFixedViewport(window, &viewport)) return FALSE;
+        point.x = viewport.left + (LONG)(((int64_t)x * (viewport.right - viewport.left)) /
+                                         GAME_CLIENT_WIDTH);
+        point.y = viewport.top + (LONG)(((int64_t)y * (viewport.bottom - viewport.top)) /
+                                        GAME_CLIENT_HEIGHT);
+    } else {
+        point.x = (LONG)(((int64_t)x * g_scale2) / 2);
+        point.y = (LONG)(((int64_t)y * g_scale2) / 2);
+    }
     return ClientToScreen(window, &point) && g_original_set_cursor_pos(point.x, point.y);
 }
 
@@ -161,6 +280,28 @@ static bool WriteCode(uintptr_t address, const void *data, size_t length) {
     bool restored = VirtualProtect((LPVOID)address, length, old_protection, &ignored) != FALSE;
     FlushInstructionCache(GetCurrentProcess(), (LPCVOID)address, length);
     return restored;
+}
+
+static bool PatchEffectStride(uintptr_t address) {
+    static const uint8_t expected[] = {0x68, 0x00, 0x03, 0x00, 0x00};
+    static const uint8_t replacement[] = {0x68, 0xE0, 0x03, 0x00, 0x00};
+    if (memcmp((const void *)address, replacement, sizeof(replacement)) == 0) return true;
+    if (memcmp((const void *)address, expected, sizeof(expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
+    return WriteCode(address, replacement, sizeof(replacement));
+}
+
+static bool PatchEffectRight(uintptr_t address) {
+    static const uint8_t expected[] = {0x68, 0xC0, 0x02, 0x00, 0x00};
+    static const uint8_t replacement[] = {0x68, 0xA0, 0x03, 0x00, 0x00};
+    if (memcmp((const void *)address, replacement, sizeof(replacement)) == 0) return true;
+    if (memcmp((const void *)address, expected, sizeof(expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
+    return WriteCode(address, replacement, sizeof(replacement));
 }
 
 static uint8_t *AllocateHookCode(size_t length, uintptr_t hook_address) {
@@ -220,106 +361,266 @@ static bool InstallHook(uintptr_t address,
     uint8_t jump[16] = {0xE9};
     memcpy(jump + 1, &(int32_t){(int32_t)hook_displacement}, sizeof(int32_t));
     memset(jump + 5, 0x90, expected_length - 5);
-    return WriteCode(address, jump, expected_length);
+    bool installed = WriteCode(address, jump, expected_length);
+    if (installed) g_last_hook_code = remote;
+    return installed;
 }
 
-/*
-static void __cdecl PresentProbeEnter(void) {
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    g_present_enter = now;
-    if (g_present_previous.QuadPart != 0) {
-        uint64_t interval = (uint64_t)(now.QuadPart - g_present_previous.QuadPart);
-        g_present_interval_total += interval;
-        if (interval < g_present_interval_min) g_present_interval_min = interval;
-        if (interval > g_present_interval_max) g_present_interval_max = interval;
+static void ApplyWidescreenRendererWidth(void) {
+    uintptr_t renderer = *(volatile uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    if (renderer == 0) return;
+    uintptr_t descriptor = *(volatile uintptr_t *)(renderer + 0x28u);
+    if (descriptor != 0) *(volatile uint32_t *)(descriptor + 0x04u) = WIDESCREEN_CLIENT_WIDTH;
+}
+
+static void __cdecl MarkMapFrame(void) {
+    InterlockedExchange(&g_map_frame, 1);
+}
+
+static void __cdecl MarkBinkFrame(void) {
+    InterlockedExchange(&g_bink_frame, 1);
+}
+
+static bool ComposeFixedFrame(uintptr_t renderer) {
+    LPDIRECTDRAWSURFACE4 back =
+        (LPDIRECTDRAWSURFACE4)*(volatile uintptr_t *)(renderer + 0x08u);
+    LPDIRECTDRAWSURFACE4 scratch =
+        (LPDIRECTDRAWSURFACE4)*(volatile uintptr_t *)(renderer + 0x14u);
+    if (back == NULL || scratch == NULL) return false;
+
+    /* Build the centered 4:3 frame off-screen so primary receives one Blt. */
+    RECT left_bar = {0, 0, (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2, WIDESCREEN_CLIENT_HEIGHT};
+    RECT right_bar = {left_bar.right + GAME_CLIENT_WIDTH, 0, WIDESCREEN_CLIENT_WIDTH, WIDESCREEN_CLIENT_HEIGHT};
+    RECT source = {0, 0, GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT};
+    RECT destination = {left_bar.right, 0, left_bar.right + GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT};
+    DDBLTFX fill = {0};
+    fill.dwSize = sizeof(fill);
+
+    if (FAILED(IDirectDrawSurface4_Blt(scratch,
+                                       &source,
+                                       back,
+                                       &source,
+                                       DDBLT_WAIT,
+                                       NULL))) {
+        return false;
     }
-    g_present_previous = now;
+    if (FAILED(IDirectDrawSurface4_Blt(back,
+                                       &destination,
+                                       scratch,
+                                       &source,
+                                       DDBLT_WAIT,
+                                       NULL))) {
+        return false;
+    }
+    return SUCCEEDED(IDirectDrawSurface4_Blt(back,
+                                             &left_bar,
+                                             NULL,
+                                             NULL,
+                                             DDBLT_WAIT | DDBLT_COLORFILL,
+                                             &fill)) &&
+           SUCCEEDED(IDirectDrawSurface4_Blt(back,
+                                             &right_bar,
+                                             NULL,
+                                             NULL,
+                                             DDBLT_WAIT | DDBLT_COLORFILL,
+                                             &fill));
 }
 
-static double CounterMilliseconds(uint64_t ticks) {
-    return (double)ticks * 1000.0 / (double)g_present_frequency.QuadPart;
+static bool PresentBinkCentered(uintptr_t renderer) {
+    LPDIRECTDRAWSURFACE4 primary =
+        (LPDIRECTDRAWSURFACE4)*(volatile uintptr_t *)(renderer + 0x04u);
+    LPDIRECTDRAWSURFACE4 back =
+        (LPDIRECTDRAWSURFACE4)*(volatile uintptr_t *)(renderer + 0x08u);
+    HWND window = ReadRuntimeWindow();
+    RECT viewport;
+    POINT top_left;
+    POINT bottom_right;
+    RECT source = {0, 0, GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT};
+    RECT destination;
+    if (primary == NULL || back == NULL || window == NULL ||
+        !GetFixedViewport(window, &viewport)) return false;
+
+    top_left.x = viewport.left;
+    top_left.y = viewport.top;
+    bottom_right.x = viewport.right;
+    bottom_right.y = viewport.bottom;
+    if (!ClientToScreen(window, &top_left) || !ClientToScreen(window, &bottom_right)) return false;
+    destination.left = top_left.x;
+    destination.top = top_left.y;
+    destination.right = bottom_right.x;
+    destination.bottom = bottom_right.y;
+    return SUCCEEDED(IDirectDrawSurface4_Blt(primary,
+                                              &destination,
+                                              back,
+                                              &source,
+                                              DDBLT_WAIT,
+                                              NULL));
 }
 
-static void __cdecl PresentProbeExit(void) {
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    uint64_t duration = (uint64_t)(now.QuadPart - g_present_enter.QuadPart);
-    g_present_duration_total += duration;
-    if (duration > g_present_duration_max) g_present_duration_max = duration;
-    ++g_present_samples;
-    if (g_present_samples < 100) return;
-
-    uint32_t intervals = g_present_samples - 1u;
-    wchar_t message[256];
-    _snwprintf_s(message,
-                 _countof(message),
-                 _TRUNCATE,
-                 L"CastleRuntime: present samples=%lu interval_ms(avg/min/max)=%.3f/%.3f/%.3f duration_ms(avg/max)=%.3f/%.3f\n",
-                 (unsigned long)g_present_samples,
-                 intervals != 0 ? CounterMilliseconds(g_present_interval_total) / intervals : 0.0,
-                 CounterMilliseconds(g_present_interval_min == UINT64_MAX ? 0 : g_present_interval_min),
-                 CounterMilliseconds(g_present_interval_max),
-                 CounterMilliseconds(g_present_duration_total) / g_present_samples,
-                 CounterMilliseconds(g_present_duration_max));
-    OutputDebugStringW(message);
-
-    g_present_interval_total = 0;
-    g_present_duration_total = 0;
-    g_present_interval_min = UINT64_MAX;
-    g_present_interval_max = 0;
-    g_present_duration_max = 0;
-    g_present_samples = 0;
-    g_present_previous.QuadPart = 0;
+static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
+    (void)unused_edx;
+    bool map_frame = InterlockedExchange(&g_map_frame, 0) != 0;
+    bool bink_frame = InterlockedExchange(&g_bink_frame, 0) != 0;
+    InterlockedExchange(&g_map_active, map_frame ? 1 : 0);
+    if (bink_frame) {
+        (void)PresentBinkCentered((uintptr_t)renderer);
+    } else {
+        if (!map_frame) (void)ComposeFixedFrame((uintptr_t)renderer);
+        if (g_original_present != NULL) g_original_present(renderer);
+    }
 }
 
-static bool InstallFramePacingDiagnostics(void) {
-    static const uint8_t expected[] = {0xE8, 0xB1, 0x0A, 0x00, 0x00};
-    uint8_t code[] = {
-        0x9C, 0x60, 0xB8, 0, 0, 0, 0, 0xFF, 0xD0, 0x61, 0x9D,
+static bool InstallWidescreenHooks(void) {
+    static const uint8_t renderer_width_expected[] = {0xE8, 0xDC, 0x43, 0x00, 0x00};
+    static const uint8_t map_render_expected[] = {
+        0x56, 0x8B, 0xF1, 0x8A, 0x86, 0x19, 0x02, 0x00, 0x00, 0x84, 0xC0,
+    };
+    static const uint8_t present_expected[] = {
+        0x83, 0xEC, 0x14, 0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x30,
+    };
+    static const uint8_t bink_frame_expected[] = {
+        0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
+    };
+    static const uint8_t camera_left_expected[] = {0x00, 0x01, 0x00, 0x00};
+    static const uint8_t camera_right_expected[] = {0x80, 0x01, 0x00, 0x00};
+    static const uint8_t camera_left_reposition_expected[] = {0x00, 0xFF, 0xFF, 0xFF};
+    static const uint8_t camera_right_reposition_expected[] = {0x80, 0xFE, 0xFF, 0xFF};
+    static const uint8_t camera_left_replacement[] = {0x00, 0x01, 0x00, 0x00};
+    static const uint8_t camera_right_replacement[] = {0x60, 0x02, 0x00, 0x00};
+    static const uint8_t camera_left_reposition_replacement[] = {0x00, 0xFF, 0xFF, 0xFF};
+    static const uint8_t camera_right_reposition_replacement[] = {0xA0, 0xFD, 0xFF, 0xFF};
+
+    if (memcmp((const void *)RENDERER_WIDTH_HOOK_ADDRESS,
+               renderer_width_expected,
+               sizeof(renderer_width_expected)) != 0 ||
+        memcmp((const void *)MAP_RENDER_HOOK_ADDRESS,
+               map_render_expected,
+               sizeof(map_render_expected)) != 0 ||
+        memcmp((const void *)PRESENT_FUNCTION_ADDRESS,
+               present_expected,
+               sizeof(present_expected)) != 0 ||
+        memcmp((const void *)MAP_CAMERA_LEFT_ADDRESS,
+               camera_left_expected,
+               sizeof(camera_left_expected)) != 0 ||
+         memcmp((const void *)MAP_CAMERA_RIGHT_ADDRESS,
+                 camera_right_expected,
+                 sizeof(camera_right_expected)) != 0 ||
+         memcmp((const void *)MAP_CAMERA_LEFT_REPOSITION_ADDRESS,
+                camera_left_reposition_expected,
+                sizeof(camera_left_reposition_expected)) != 0 ||
+         memcmp((const void *)MAP_CAMERA_RIGHT_REPOSITION_ADDRESS,
+                camera_right_reposition_expected,
+                sizeof(camera_right_reposition_expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
+
+    uint8_t renderer_width_code[] = {
+        0x60,
         0xB8, 0, 0, 0, 0, 0xFF, 0xD0,
-        0x9C, 0x60, 0xB8, 0, 0, 0, 0, 0xFF, 0xD0, 0x61, 0x9D,
+        0x61,
+        0xB8, 0, 0, 0, 0, 0xFF, 0xD0,
         0xE9, 0, 0, 0, 0,
     };
-    memcpy(code + 3, &(uint32_t){(uint32_t)(uintptr_t)PresentProbeEnter}, sizeof(uint32_t));
-    memcpy(code + 12, &(uint32_t){(uint32_t)PRESENT_FUNCTION_ADDRESS}, sizeof(uint32_t));
-    memcpy(code + 21, &(uint32_t){(uint32_t)(uintptr_t)PresentProbeExit}, sizeof(uint32_t));
-    if (!QueryPerformanceFrequency(&g_present_frequency) || g_present_frequency.QuadPart == 0) return false;
-    return InstallHook(PRESENT_CALL_HOOK_ADDRESS,
-                       expected,
-                       sizeof(expected),
-                       code,
-                       sizeof(code),
-                       30);
-}
+    memcpy(renderer_width_code + 2,
+           &(uint32_t){(uint32_t)(uintptr_t)&ApplyWidescreenRendererWidth},
+           sizeof(uint32_t));
+    memcpy(renderer_width_code + 10,
+           &(uint32_t){(uint32_t)0x00405960u},
+           sizeof(uint32_t));
 
-static void LogDisplayEnvironment(void) {
-    typedef HRESULT (WINAPI *DwmIsCompositionEnabledFn)(BOOL *enabled);
-    BOOL composition_enabled = FALSE;
-    HMODULE dwmapi = LoadLibraryW(L"dwmapi.dll");
-    if (dwmapi != NULL) {
-        DwmIsCompositionEnabledFn is_composition_enabled =
-            (DwmIsCompositionEnabledFn)(uintptr_t)GetProcAddress(dwmapi, "DwmIsCompositionEnabled");
-        if (is_composition_enabled != NULL) is_composition_enabled(&composition_enabled);
-        FreeLibrary(dwmapi);
+    uint8_t map_render_code[] = {
+        0x60,                         /* mark the whole map/fade frame */
+        0xB8, 0, 0, 0, 0, 0xFF, 0xD0,
+        0x61,
+        0x56, 0x8B, 0xF1, 0x8A, 0x86, 0x19, 0x02, 0x00, 0x00, 0x84, 0xC0,
+        0xE9, 0, 0, 0, 0,
+    };
+    memcpy(map_render_code + 2,
+           &(uint32_t){(uint32_t)(uintptr_t)&MarkMapFrame},
+           sizeof(uint32_t));
+
+    uint8_t present_code[] = {
+        0x83, 0xEC, 0x14, 0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x30,
+        0xE9, 0, 0, 0, 0,
+    };
+
+    uint8_t bink_frame_code[] = {
+        0x51,
+        0xB8, 0, 0, 0, 0, 0xFF, 0xD0,
+        0x59,
+        0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
+        0xE9, 0, 0, 0, 0,
+    };
+    memcpy(bink_frame_code + 2,
+           &(uint32_t){(uint32_t)(uintptr_t)&MarkBinkFrame},
+           sizeof(uint32_t));
+
+    if (!WriteCode(MAP_CAMERA_LEFT_ADDRESS,
+                   camera_left_replacement,
+                   sizeof(camera_left_replacement)) ||
+        !WriteCode(MAP_CAMERA_RIGHT_ADDRESS,
+                   camera_right_replacement,
+                   sizeof(camera_right_replacement)) ||
+        !WriteCode(MAP_CAMERA_LEFT_REPOSITION_ADDRESS,
+                   camera_left_reposition_replacement,
+                   sizeof(camera_left_reposition_replacement)) ||
+        !WriteCode(MAP_CAMERA_RIGHT_REPOSITION_ADDRESS,
+                   camera_right_reposition_replacement,
+                   sizeof(camera_right_reposition_replacement)) ||
+        !InstallHook(RENDERER_WIDTH_HOOK_ADDRESS,
+                     renderer_width_expected,
+                     sizeof(renderer_width_expected),
+                     renderer_width_code,
+                     sizeof(renderer_width_code),
+                     17) ||
+        !InstallHook(MAP_RENDER_HOOK_ADDRESS,
+                      map_render_expected,
+                      sizeof(map_render_expected),
+                      map_render_code,
+                      sizeof(map_render_code),
+                      21) ||
+        !InstallHook(PRESENT_FUNCTION_ADDRESS,
+                     present_expected,
+                     sizeof(present_expected),
+                      present_code,
+                      sizeof(present_code),
+                      10)) {
+        return false;
+    }
+    if (!PatchEffectStride(EFFECT_STRIDE_1_ADDRESS) ||
+        !PatchEffectStride(EFFECT_STRIDE_2_ADDRESS) ||
+        !PatchEffectStride(EFFECT_STRIDE_3_ADDRESS) ||
+        !PatchEffectStride(EFFECT_STRIDE_4_ADDRESS) ||
+        !PatchEffectRight(EFFECT_RIGHT_1_ADDRESS) ||
+        !PatchEffectRight(EFFECT_RIGHT_2_ADDRESS) ||
+        !PatchEffectRight(EFFECT_RIGHT_3_ADDRESS)) {
+        return false;
+    }
+    g_original_present = (PresentFn)g_last_hook_code;
+
+    if (!InstallHook(BINK_FRAME_FUNCTION_ADDRESS,
+                     bink_frame_expected,
+                     sizeof(bink_frame_expected),
+                     bink_frame_code,
+                     sizeof(bink_frame_code),
+                     18)) {
+        return false;
     }
 
-    DEVMODEW mode = {.dmSize = sizeof(mode)};
-    BOOL have_mode = EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &mode);
-    wchar_t message[192];
-    _snwprintf_s(message,
-                 _countof(message),
-                 _TRUNCATE,
-                 L"CastleRuntime: frame pacing diagnostics enabled; DWM=%ls display=%lux%lu %luHz %lubpp\n",
-                 composition_enabled ? L"on" : L"off/unknown",
-                 (unsigned long)(have_mode ? mode.dmPelsWidth : 0),
-                 (unsigned long)(have_mode ? mode.dmPelsHeight : 0),
-                 (unsigned long)(have_mode ? mode.dmDisplayFrequency : 0),
-                 (unsigned long)(have_mode ? mode.dmBitsPerPel : 0));
-    OutputDebugStringW(message);
+    uint8_t present_jump[16] = {0xE9};
+    int64_t present_displacement = (int64_t)(uintptr_t)&RuntimePresent -
+                                   (int64_t)(PRESENT_FUNCTION_ADDRESS + 5u);
+    if (present_displacement < INT32_MIN || present_displacement > INT32_MAX) {
+        SetLastError(ERROR_NOT_SUPPORTED);
+        return false;
+    }
+    memcpy(present_jump + 1, &(int32_t){(int32_t)present_displacement}, sizeof(int32_t));
+    memset(present_jump + 5, 0x90, sizeof(present_expected) - 5u);
+    if (!WriteCode(PRESENT_FUNCTION_ADDRESS, present_jump, sizeof(present_expected))) return false;
+    return true;
 }
 
-*/
 static bool IsEncounterStateInvalid(uint32_t threshold, uint32_t progress);
 
 static uint32_t ScaleEncounterThreshold(uint32_t threshold, uint32_t rate) {
@@ -333,8 +634,12 @@ static void ApplyEncounterThresholdRate(void) {
     uint32_t rate = (uint32_t)InterlockedCompareExchange(&g_encounter_rate_percent, 0, 0);
     volatile uint32_t *threshold = (volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
     volatile uint32_t *progress = (volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
+    if (!g_encounter_map_enabled) {
+        *threshold = 0;
+        *progress = 0;
+        return;
+    }
     if (IsEncounterStateInvalid(*threshold, *progress)) {
-        OutputDebugStringW(L"CastleRuntime: invalid encounter state in threshold hook; resetting\n");
         *progress = 0;
         if (rate == 0 || !g_encounter_map_enabled) {
             *threshold = 0;
@@ -355,7 +660,6 @@ static void ResetInvalidEncounterState(void) {
     volatile uint32_t *threshold = (volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
     volatile uint32_t *progress = (volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
     uint32_t rate = GetEncounterRate();
-    OutputDebugStringW(L"CastleRuntime: invalid encounter state; resetting\n");
     *progress = 0;
     if (rate == 0 || !g_encounter_map_enabled) {
         *threshold = 0;
@@ -608,8 +912,10 @@ static DWORD InstallSettlementHooks(void) {
 }
 
 static void ResizeGameWindow(HWND window) {
-    LONG client_width = (LONG)(((uint64_t)GAME_CLIENT_WIDTH * g_scale2 + 1u) / 2u);
-    LONG client_height = (LONG)(((uint64_t)GAME_CLIENT_HEIGHT * g_scale2 + 1u) / 2u);
+    uint32_t logical_width = g_widescreen ? WIDESCREEN_CLIENT_WIDTH : GAME_CLIENT_WIDTH;
+    uint32_t logical_height = g_widescreen ? WIDESCREEN_CLIENT_HEIGHT : GAME_CLIENT_HEIGHT;
+    LONG client_width = (LONG)(((uint64_t)logical_width * g_scale2 + 1u) / 2u);
+    LONG client_height = (LONG)(((uint64_t)logical_height * g_scale2 + 1u) / 2u);
     RECT rect = {0, 0, client_width, client_height};
     if (!AdjustWindowRectEx(&rect, (DWORD)GetWindowLongA(window, GWL_STYLE), GetMenu(window) != NULL,
                             (DWORD)GetWindowLongA(window, GWL_EXSTYLE))) return;
@@ -635,7 +941,6 @@ static uint32_t GetEncounterRate(void) {
     uint32_t rate = (uint32_t)InterlockedCompareExchange(&g_encounter_rate_percent, 0, 0);
     size_t index = FindEncounterRateIndex(rate);
     if (kEncounterRates[index] != rate) {
-        OutputDebugStringW(L"CastleRuntime: invalid encounter rate; restoring 100%\n");
         InterlockedExchange(&g_encounter_rate_percent, 100);
         return 100;
     }
@@ -652,20 +957,7 @@ static uint32_t ScaleEncounterStateValue(uint32_t value,
     return scaled > UINT32_MAX ? UINT32_MAX : (uint32_t)scaled;
 }
 
-static void ShowEncounterRateFeedback(uint32_t rate, uint32_t old_rate) {
-    uint32_t threshold = *(volatile uint32_t *)ENCOUNTER_THRESHOLD_ADDRESS;
-    uint32_t progress = *(volatile uint32_t *)ENCOUNTER_PROGRESS_ADDRESS;
-    wchar_t message[192];
-    _snwprintf_s(message,
-                 _countof(message),
-                 _TRUNCATE,
-                 L"CastleRuntime: encounter rate %lu%% -> %lu%%, threshold=%lu, progress=%lu\n",
-                 (unsigned long)old_rate,
-                 (unsigned long)rate,
-                 (unsigned long)threshold,
-                 (unsigned long)progress);
-    OutputDebugStringW(message);
-
+static void ShowEncounterRateFeedback(uint32_t rate) {
     if (g_windowed) {
         HWND window = ReadRuntimeWindow();
         wchar_t title[256];
@@ -693,7 +985,7 @@ static void SetEncounterRate(uint32_t requested_rate) {
     }
 
     if (old_rate == rate) {
-        ShowEncounterRateFeedback(rate, old_rate);
+        ShowEncounterRateFeedback(rate);
         return;
     }
 
@@ -724,7 +1016,7 @@ static void SetEncounterRate(uint32_t requested_rate) {
         InterlockedExchange(&g_encounter_rate_percent, (LONG)rate);
     }
 
-    ShowEncounterRateFeedback(rate, old_rate);
+    ShowEncounterRateFeedback(rate);
 }
 
 static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
@@ -803,6 +1095,7 @@ static DWORD WINAPI RuntimeWorker(void *parameter) {
     (void)parameter;
     g_scale2 = LoadScale();
     g_windowed = LoadBool(L"Windowed", false);
+    g_widescreen = LoadBool(L"Widescreen", false);
     g_cursor_lock = LoadBool(L"CursorLock", false);
     for (int attempt = 0; attempt < 400; ++attempt) {
         HWND window = ReadGameWindow();
@@ -813,7 +1106,6 @@ static DWORD WINAPI RuntimeWorker(void *parameter) {
         Sleep(25);
     }
     if (ReadRuntimeWindow() == NULL && g_dynamic_encounter_rate) {
-        OutputDebugStringW(L"CastleRuntime: game window was not created within 10 seconds; continuing to wait\n");
         for (;;) {
             HWND window = ReadGameWindow();
             if (window != NULL && IsWindow(window)) {
@@ -825,7 +1117,6 @@ static DWORD WINAPI RuntimeWorker(void *parameter) {
     }
     if (ReadRuntimeWindow() == NULL) return 0;
     if (g_dynamic_encounter_rate && !InstallEncounterWindowProcedure()) {
-        OutputDebugStringW(L"CastleRuntime: failed to install encounter hotkey window procedure\n");
         g_dynamic_encounter_rate = false;
     }
     for (int attempt = 0; attempt < 20; ++attempt) {
@@ -848,16 +1139,22 @@ static DWORD WINAPI RuntimeWorker(void *parameter) {
 }
 
 __declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
+    g_previous_exception_filter = SetUnhandledExceptionFilter(RuntimeUnhandledExceptionFilter);
     g_experience_multiplier = LoadMultiplier(L"ExperienceMultiplier");
     g_money_multiplier = LoadMultiplier(L"MoneyMultiplier");
     g_dynamic_encounter_rate = LoadPatchBool(L"DynamicEncounterRate", false);
+    g_windowed = LoadBool(L"Windowed", false);
+    g_widescreen = LoadBool(L"Widescreen", false);
     DWORD settlement_result = InstallSettlementHooks();
     if (settlement_result != 1) return settlement_result;
     if (g_dynamic_encounter_rate) {
         DWORD encounter_result = InstallEncounterHooks();
         if (encounter_result != 1) return encounter_result;
     }
-    if (!LoadBool(L"Windowed", false) && !g_dynamic_encounter_rate) return 1;
+    if (g_widescreen) {
+        if (!g_windowed || !InstallWidescreenHooks()) return 241;
+    }
+    if (!g_windowed && !g_dynamic_encounter_rate && !g_widescreen) return 1;
     HANDLE thread = CreateThread(NULL, 0, RuntimeWorker, NULL, 0, NULL);
     if (thread == NULL) return 0;
     CloseHandle(thread);

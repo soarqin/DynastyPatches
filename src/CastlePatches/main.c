@@ -28,6 +28,7 @@ enum {
     ID_MAX_LOOT,
     ID_WINDOWED,
     ID_CURSOR_LOCK,
+    ID_WIDESCREEN,
     ID_SCALE,
     ID_EXP_MULTIPLIER,
     ID_EXP_MULTIPLIER_SPIN,
@@ -79,6 +80,7 @@ typedef struct LaunchOptions {
     bool max_loot;
     bool windowed;
     bool cursor_lock;
+    bool widescreen;
     /* Fixed-point scale in half-units: 2 = 1×, 3 = 1.5×, ... */
     uint32_t scale2;
     uint32_t experience_multiplier;
@@ -328,6 +330,7 @@ static void SaveOptions(const LaunchOptions *options) {
     WritePrivateProfileStringW(L"Patches", L"DynamicEncounterRate", options->dynamic_encounter_rate ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Display", L"Windowed", options->windowed ? L"1" : L"0", config_path);
     WritePrivateProfileStringW(L"Display", L"CursorLock", options->cursor_lock ? L"1" : L"0", config_path);
+    WritePrivateProfileStringW(L"Display", L"Widescreen", options->widescreen ? L"1" : L"0", config_path);
 
     wchar_t scale[16];
     _snwprintf_s(scale, _countof(scale), _TRUNCATE, L"%lu", (unsigned long)options->scale2);
@@ -1144,6 +1147,11 @@ static bool ApplySelectedPatches(HANDLE process,
         (void)ApplyPatchGroup(process, groups[index]);
     }
 
+    if (options->widescreen && !options->windowed) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return false;
+    }
+
     if (!options->windowed) {
         if (LoadConfigDisplayBool(L"FullscreenVSync", false)) {
             if (!InstallFullscreenVblankHook(process)) return false;
@@ -1242,6 +1250,7 @@ static void Launch(HWND owner) {
         .max_loot = IsChecked(ID_MAX_LOOT),
         .windowed = IsChecked(ID_WINDOWED),
         .cursor_lock = IsChecked(ID_CURSOR_LOCK),
+        .widescreen = IsChecked(ID_WIDESCREEN),
         .scale2 = ScaleIndexToValue((int)SendMessageW(g_scale_combo, CB_GETCURSEL, 0, 0)),
         .experience_multiplier = ReadMultiplier(g_experience_multiplier_edit),
         .money_multiplier = ReadMultiplier(g_money_multiplier_edit),
@@ -1265,7 +1274,7 @@ static void Launch(HWND owner) {
         return;
     }
 
-    if ((options.windowed || options.experience_multiplier != 1 || options.money_multiplier != 1 ||
+    if ((options.windowed || options.widescreen || options.experience_multiplier != 1 || options.money_multiplier != 1 ||
          options.dynamic_encounter_rate) &&
         !InjectRuntimeDll(process_info.hProcess)) {
         DWORD error = GetLastError();
@@ -1310,6 +1319,7 @@ static void Launch(HWND owner) {
 static void UpdateWindowedControls(HWND window) {
     EnableWindow(g_scale_combo, IsChecked(ID_WINDOWED));
     EnableWindow(GetDlgItem(window, ID_CURSOR_LOCK), IsChecked(ID_WINDOWED));
+    EnableWindow(GetDlgItem(window, ID_WIDESCREEN), IsChecked(ID_WINDOWED));
     InvalidateRect(window, NULL, TRUE);
 }
 
@@ -1364,6 +1374,7 @@ static void CreateControls(HWND window) {
     AddControl(window, L"STATIC", L"显示模式", SS_LEFT, 360, 18, 140, 22, -1);
     AddControl(window, L"BUTTON", L"窗口模式（修正鼠标坐标）", BS_AUTOCHECKBOX, 360, 44, 220, 24, ID_WINDOWED);
     AddControl(window, L"BUTTON", L"锁定鼠标在窗口内", BS_AUTOCHECKBOX, 360, 70, 220, 24, ID_CURSOR_LOCK);
+    AddControl(window, L"BUTTON", L"宽屏地图（864 × 480）", BS_AUTOCHECKBOX, 360, 130, 220, 24, ID_WIDESCREEN);
     AddControl(window, L"STATIC", L"窗口倍率", SS_LEFT, 360, 104, 90, 22, -1);
     g_scale_combo = AddControl(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 430, 100, 140, 140, ID_SCALE);
     SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1×（640 × 480）");
@@ -1394,6 +1405,7 @@ static void CreateControls(HWND window) {
     CheckDlgButton(window, ID_DYNAMIC_ENCOUNTER_RATE, LoadConfigBool(L"DynamicEncounterRate", false) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_WINDOWED, LoadConfigDisplayBool(L"Windowed", false) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(window, ID_CURSOR_LOCK, LoadConfigDisplayBool(L"CursorLock", false) ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(window, ID_WIDESCREEN, LoadConfigDisplayBool(L"Widescreen", false) ? BST_CHECKED : BST_UNCHECKED);
     UpdateWindowedControls(window);
 }
 

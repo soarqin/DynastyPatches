@@ -25,6 +25,8 @@ target_compile_definitions(CastleRuntime PRIVATE
     NOMINMAX
 )
 
+target_link_libraries(CastleRuntime PRIVATE dbghelp)
+
 if(MSVC)
     target_compile_options(CastleRuntime PRIVATE /W4 /permissive- /utf-8)
 else()
