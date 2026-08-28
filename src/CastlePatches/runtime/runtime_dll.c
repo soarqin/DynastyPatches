@@ -22,6 +22,8 @@
 #define DIALOG_TEXT_NAME_RETURN_ADDRESS ((uintptr_t)0x004048EBu)
 #define DIALOG_TEXT_BODY_CALL_ADDRESS ((uintptr_t)0x004049FFu)
 #define DIALOG_TEXT_BODY_RETURN_ADDRESS ((uintptr_t)0x00404A04u)
+#define GLYPH_BLIT_HOOK_ADDRESS ((uintptr_t)0x0044E93Du)
+#define GLYPH_BLIT_CONTINUE_ADDRESS ((uintptr_t)0x0044E94Cu)
 #define MAP_UI_SPRITE_HOOK_ADDRESS ((uintptr_t)0x00407510u)
 #define MAP_UI_SPRITE_RETURN_ADDRESS ((uintptr_t)0x0040751Cu)
 #define PRESENT_FUNCTION_ADDRESS ((uintptr_t)0x004064E0u)
@@ -71,6 +73,7 @@ static size_t BuildDialogTextHook(uint8_t *buffer,
                                   uintptr_t return_address);
 static size_t BuildDialogTextNameHook(uint8_t *buffer, size_t capacity);
 static size_t BuildDialogTextBodyHook(uint8_t *buffer, size_t capacity);
+static size_t BuildGlyphBlitGuardHook(uint8_t *buffer, size_t capacity);
 static size_t BuildMapUiSpriteHook(uint8_t *buffer, size_t capacity);
 static bool InstallGeneratedHook(uintptr_t address,
                                  const uint8_t *expected,
@@ -215,6 +218,7 @@ static size_t BuildDialogTextHook(uint8_t *buffer,
         !EmitEncounterByte(buffer, capacity, &offset, 0x24) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0x0C) ||
         !EmitEncounterDword(buffer, capacity, &offset,
+                            /* The original glyph blit overruns at the exact right edge. */
                             (uint32_t)((WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2)) ||
         !EmitEncounterPushImm(buffer, capacity, &offset, return_address) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0xB8) ||
@@ -232,6 +236,72 @@ static size_t BuildDialogTextNameHook(uint8_t *buffer, size_t capacity) {
 
 static size_t BuildDialogTextBodyHook(uint8_t *buffer, size_t capacity) {
     return BuildDialogTextHook(buffer, capacity, DIALOG_TEXT_BODY_RETURN_ADDRESS);
+}
+
+static size_t BuildGlyphBlitGuardHook(uint8_t *buffer, size_t capacity) {
+    static const uint8_t original[] = {
+        0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x10, 0x53, 0x56,
+        0x57, 0x8B, 0x45, 0x14, 0x2B, 0x45, 0x20,
+    };
+    size_t offset = 0;
+    size_t first_branch;
+    size_t second_branch;
+    size_t invalid;
+    if (capacity - offset < sizeof(original)) {
+        return 0;
+    }
+    memcpy(buffer + offset, original, sizeof(original));
+    offset += sizeof(original);
+    if (
+        !EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x45) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x14) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x3B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x45) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x20) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x74)) {
+        return 0;
+    }
+    first_branch = offset++;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x45) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x18) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x3B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x45) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x24) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x74)) {
+        return 0;
+    }
+    second_branch = offset++;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x45) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x14) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x2B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x45) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x20) ||
+        !EmitEncounterPushImm(buffer, capacity, &offset, GLYPH_BLIT_CONTINUE_ADDRESS) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC3)) {
+        return 0;
+    }
+    invalid = offset;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x31) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC0) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x5F) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x5E) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x5B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xE5) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x5D) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC3) ||
+        invalid <= first_branch + 1u ||
+        invalid <= second_branch + 1u ||
+        invalid - first_branch - 1u > 0x7Fu ||
+        invalid - second_branch - 1u > 0x7Fu) {
+        return 0;
+    }
+    buffer[first_branch] = (uint8_t)(invalid - first_branch - 1u);
+    buffer[second_branch] = (uint8_t)(invalid - second_branch - 1u);
+    return offset;
 }
 
 static void __cdecl OffsetMapUiSpriteX(uintptr_t object) {
@@ -550,6 +620,10 @@ static bool InstallWidescreenHooks(void) {
     };
     static const uint8_t dialog_text_name_call_expected[] = {0xE8, 0xF5, 0xE5, 0xFF, 0xFF};
     static const uint8_t dialog_text_body_call_expected[] = {0xE8, 0xDC, 0xE4, 0xFF, 0xFF};
+    static const uint8_t glyph_blit_expected[] = {
+        0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x10, 0x53, 0x56,
+        0x57, 0x8B, 0x45, 0x14, 0x2B, 0x45, 0x20,
+    };
     static const uint8_t camera_left_expected[] = {0x00, 0x01, 0x00, 0x00};
     static const uint8_t camera_right_expected[] = {0x80, 0x01, 0x00, 0x00};
     static const uint8_t camera_left_reposition_expected[] = {0x00, 0xFF, 0xFF, 0xFF};
@@ -577,6 +651,9 @@ static bool InstallWidescreenHooks(void) {
         memcmp((const void *)DIALOG_TEXT_BODY_CALL_ADDRESS,
                dialog_text_body_call_expected,
                sizeof(dialog_text_body_call_expected)) != 0 ||
+        memcmp((const void *)GLYPH_BLIT_HOOK_ADDRESS,
+               glyph_blit_expected,
+               sizeof(glyph_blit_expected)) != 0 ||
         memcmp((const void *)MAP_CAMERA_LEFT_ADDRESS,
                camera_left_expected,
                sizeof(camera_left_expected)) != 0 ||
@@ -675,7 +752,11 @@ static bool InstallWidescreenHooks(void) {
         !InstallGeneratedHook(DIALOG_TEXT_BODY_CALL_ADDRESS,
                               dialog_text_body_call_expected,
                               sizeof(dialog_text_body_call_expected),
-                              BuildDialogTextBodyHook)) {
+                              BuildDialogTextBodyHook) ||
+        !InstallGeneratedHook(GLYPH_BLIT_HOOK_ADDRESS,
+                              glyph_blit_expected,
+                              sizeof(glyph_blit_expected),
+                              BuildGlyphBlitGuardHook)) {
         return false;
     }
     if (!PatchEffectStride(EFFECT_STRIDE_1_ADDRESS) ||
