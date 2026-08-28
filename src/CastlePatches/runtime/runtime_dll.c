@@ -304,18 +304,9 @@ static size_t BuildGlyphBlitGuardHook(uint8_t *buffer, size_t capacity) {
     return offset;
 }
 
-static void __cdecl OffsetMapUiSpriteX(uintptr_t object) {
-    if (!g_widescreen) return;
-    if (object == *(volatile uintptr_t *)0x0046F648u ||
-        object == *(volatile uintptr_t *)0x0046F64Cu ||
-        object == *(volatile uintptr_t *)0x0046F650u ||
-        object == *(volatile uintptr_t *)0x0046F654u ||
-        object == *(volatile uintptr_t *)0x0046F658u) {
-        int32_t camera_x = *(volatile int32_t *)0x00978514u;
-        if (*(int32_t *)object == camera_x) {
-            *(int32_t *)object += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
-        }
-    }
+static void __cdecl OffsetMapUiSpriteX(uintptr_t object, uintptr_t caller) {
+    if (!g_widescreen || caller < 0x00404800u || caller >= 0x00404A46u) return;
+    *(int32_t *)object += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
 }
 
 static bool GetFixedViewport(HWND window, RECT *viewport) {
@@ -925,14 +916,20 @@ static size_t BuildMapUiSpriteHook(uint8_t *buffer, size_t capacity) {
     };
     size_t offset = 0;
     if (!EmitEncounterByte(buffer, capacity, &offset, 0x60) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x8B) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x44) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x24) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x0C) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xFF) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x30) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0xFF) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0x74) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0x24) ||
-        !EmitEncounterByte(buffer, capacity, &offset, 0x18) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x1C) ||
         !EmitEncounterAbsoluteCall(buffer, capacity, &offset, (uintptr_t)&OffsetMapUiSpriteX) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0x83) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0xC4) ||
-        !EmitEncounterByte(buffer, capacity, &offset, 0x04) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x08) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0x61)) {
         return 0;
     }
