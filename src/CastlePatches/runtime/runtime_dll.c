@@ -18,6 +18,12 @@
 #define MAP_CAMERA_RIGHT_ADDRESS ((uintptr_t)0x0044B3B4u)
 #define MAP_CAMERA_LEFT_REPOSITION_ADDRESS ((uintptr_t)0x0044B38Fu)
 #define MAP_CAMERA_RIGHT_REPOSITION_ADDRESS ((uintptr_t)0x0044B3C0u)
+#define DIALOG_TEXT_NAME_CALL_ADDRESS ((uintptr_t)0x004048E6u)
+#define DIALOG_TEXT_NAME_RETURN_ADDRESS ((uintptr_t)0x004048EBu)
+#define DIALOG_TEXT_BODY_CALL_ADDRESS ((uintptr_t)0x004049FFu)
+#define DIALOG_TEXT_BODY_RETURN_ADDRESS ((uintptr_t)0x00404A04u)
+#define MAP_UI_SPRITE_HOOK_ADDRESS ((uintptr_t)0x00407510u)
+#define MAP_UI_SPRITE_RETURN_ADDRESS ((uintptr_t)0x0040751Cu)
 #define PRESENT_FUNCTION_ADDRESS ((uintptr_t)0x004064E0u)
 #define BINK_FRAME_FUNCTION_ADDRESS ((uintptr_t)0x00401BA0u)
 #define EFFECT_STRIDE_1_ADDRESS ((uintptr_t)0x00406E11u)
@@ -56,6 +62,20 @@ typedef int (__cdecl *EncounterInitFn)(int);
 typedef void (__fastcall *PresentFn)(void *renderer);
 
 typedef size_t (*BuildGeneratedHookFn)(uint8_t *buffer, size_t capacity);
+
+static bool EmitEncounterByte(uint8_t *buffer, size_t capacity, size_t *offset, uint8_t value);
+static bool EmitEncounterDword(uint8_t *buffer, size_t capacity, size_t *offset, uint32_t value);
+static bool EmitEncounterPushImm(uint8_t *buffer, size_t capacity, size_t *offset, uintptr_t value);
+static size_t BuildDialogTextHook(uint8_t *buffer,
+                                  size_t capacity,
+                                  uintptr_t return_address);
+static size_t BuildDialogTextNameHook(uint8_t *buffer, size_t capacity);
+static size_t BuildDialogTextBodyHook(uint8_t *buffer, size_t capacity);
+static size_t BuildMapUiSpriteHook(uint8_t *buffer, size_t capacity);
+static bool InstallGeneratedHook(uintptr_t address,
+                                 const uint8_t *expected,
+                                 size_t expected_length,
+                                 BuildGeneratedHookFn builder);
 
 static uint32_t GetEncounterRate(void);
 
@@ -168,7 +188,9 @@ static LONG WINAPI RuntimeUnhandledExceptionFilter(EXCEPTION_POINTERS *exception
                 MiniDumpWriteDump(GetCurrentProcess(),
                                   pid,
                                   dump,
-                                  MiniDumpWithIndirectlyReferencedMemory,
+                                   MiniDumpWithFullMemory |
+                                       MiniDumpWithHandleData |
+                                       MiniDumpWithUnloadedModules,
                                   exception != NULL ? &info : NULL,
                                   NULL,
                                   NULL);
@@ -182,6 +204,48 @@ static LONG WINAPI RuntimeUnhandledExceptionFilter(EXCEPTION_POINTERS *exception
 
 static bool IsMapActive(void) {
     return InterlockedCompareExchange(&g_map_active, 0, 0) != 0;
+}
+
+static size_t BuildDialogTextHook(uint8_t *buffer,
+                                  size_t capacity,
+                                  uintptr_t return_address) {
+    size_t offset = 0;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x81) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x44) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x24) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x0C) ||
+        !EmitEncounterDword(buffer, capacity, &offset,
+                            (uint32_t)((WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2)) ||
+        !EmitEncounterPushImm(buffer, capacity, &offset, return_address) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xB8) ||
+        !EmitEncounterDword(buffer, capacity, &offset, (uint32_t)0x00402EE0u) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xFF) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xE0)) {
+        return 0;
+    }
+    return offset;
+}
+
+static size_t BuildDialogTextNameHook(uint8_t *buffer, size_t capacity) {
+    return BuildDialogTextHook(buffer, capacity, DIALOG_TEXT_NAME_RETURN_ADDRESS);
+}
+
+static size_t BuildDialogTextBodyHook(uint8_t *buffer, size_t capacity) {
+    return BuildDialogTextHook(buffer, capacity, DIALOG_TEXT_BODY_RETURN_ADDRESS);
+}
+
+static void __cdecl OffsetMapUiSpriteX(uintptr_t object) {
+    if (!g_widescreen) return;
+    if (object == *(volatile uintptr_t *)0x0046F648u ||
+        object == *(volatile uintptr_t *)0x0046F64Cu ||
+        object == *(volatile uintptr_t *)0x0046F650u ||
+        object == *(volatile uintptr_t *)0x0046F654u ||
+        object == *(volatile uintptr_t *)0x0046F658u) {
+        int32_t camera_x = *(volatile int32_t *)0x00978514u;
+        if (*(int32_t *)object == camera_x) {
+            *(int32_t *)object += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+        }
+    }
 }
 
 static bool GetFixedViewport(HWND window, RECT *viewport) {
@@ -481,6 +545,11 @@ static bool InstallWidescreenHooks(void) {
     static const uint8_t bink_frame_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
     };
+    static const uint8_t map_ui_sprite_expected[] = {
+        0x51, 0x56, 0x8B, 0xF1, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,
+    };
+    static const uint8_t dialog_text_name_call_expected[] = {0xE8, 0xF5, 0xE5, 0xFF, 0xFF};
+    static const uint8_t dialog_text_body_call_expected[] = {0xE8, 0xDC, 0xE4, 0xFF, 0xFF};
     static const uint8_t camera_left_expected[] = {0x00, 0x01, 0x00, 0x00};
     static const uint8_t camera_right_expected[] = {0x80, 0x01, 0x00, 0x00};
     static const uint8_t camera_left_reposition_expected[] = {0x00, 0xFF, 0xFF, 0xFF};
@@ -499,6 +568,15 @@ static bool InstallWidescreenHooks(void) {
         memcmp((const void *)PRESENT_FUNCTION_ADDRESS,
                present_expected,
                sizeof(present_expected)) != 0 ||
+        memcmp((const void *)MAP_UI_SPRITE_HOOK_ADDRESS,
+               map_ui_sprite_expected,
+               sizeof(map_ui_sprite_expected)) != 0 ||
+        memcmp((const void *)DIALOG_TEXT_NAME_CALL_ADDRESS,
+               dialog_text_name_call_expected,
+               sizeof(dialog_text_name_call_expected)) != 0 ||
+        memcmp((const void *)DIALOG_TEXT_BODY_CALL_ADDRESS,
+               dialog_text_body_call_expected,
+               sizeof(dialog_text_body_call_expected)) != 0 ||
         memcmp((const void *)MAP_CAMERA_LEFT_ADDRESS,
                camera_left_expected,
                sizeof(camera_left_expected)) != 0 ||
@@ -583,9 +661,21 @@ static bool InstallWidescreenHooks(void) {
         !InstallHook(PRESENT_FUNCTION_ADDRESS,
                      present_expected,
                      sizeof(present_expected),
-                      present_code,
-                      sizeof(present_code),
-                      10)) {
+                     present_code,
+                     sizeof(present_code),
+                     10) ||
+        !InstallGeneratedHook(MAP_UI_SPRITE_HOOK_ADDRESS,
+                               map_ui_sprite_expected,
+                               sizeof(map_ui_sprite_expected),
+                               BuildMapUiSpriteHook) ||
+        !InstallGeneratedHook(DIALOG_TEXT_NAME_CALL_ADDRESS,
+                              dialog_text_name_call_expected,
+                              sizeof(dialog_text_name_call_expected),
+                              BuildDialogTextNameHook) ||
+        !InstallGeneratedHook(DIALOG_TEXT_BODY_CALL_ADDRESS,
+                              dialog_text_body_call_expected,
+                              sizeof(dialog_text_body_call_expected),
+                              BuildDialogTextBodyHook)) {
         return false;
     }
     if (!PatchEffectStride(EFFECT_STRIDE_1_ADDRESS) ||
@@ -742,6 +832,33 @@ static size_t BuildEncounterRegenerationHook(uint8_t *buffer, size_t capacity) {
         !EmitEncounterPushImm(buffer, capacity, &offset, ENCOUNTER_REGENERATION_SKIP_ADDRESS) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0xC3) ||
         !EmitEncounterPushImm(buffer, capacity, &offset, ENCOUNTER_REGENERATION_RETURN_ADDRESS) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC3)) {
+        return 0;
+    }
+    return offset;
+}
+
+static size_t BuildMapUiSpriteHook(uint8_t *buffer, size_t capacity) {
+    static const uint8_t original[] = {
+        0x51, 0x56, 0x8B, 0xF1, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,
+    };
+    size_t offset = 0;
+    if (!EmitEncounterByte(buffer, capacity, &offset, 0x60) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xFF) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x74) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x24) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x18) ||
+        !EmitEncounterAbsoluteCall(buffer, capacity, &offset, (uintptr_t)&OffsetMapUiSpriteX) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x83) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0xC4) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x04) ||
+        !EmitEncounterByte(buffer, capacity, &offset, 0x61)) {
+        return 0;
+    }
+    if (capacity - offset < sizeof(original)) return 0;
+    memcpy(buffer + offset, original, sizeof(original));
+    offset += sizeof(original);
+    if (!EmitEncounterPushImm(buffer, capacity, &offset, MAP_UI_SPRITE_RETURN_ADDRESS) ||
         !EmitEncounterByte(buffer, capacity, &offset, 0xC3)) {
         return 0;
     }
