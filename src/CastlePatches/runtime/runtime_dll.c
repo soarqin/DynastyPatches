@@ -37,6 +37,7 @@
 #define EFFECT_RIGHT_3_ADDRESS ((uintptr_t)0x00406E68u)
 #define SET_CURSOR_POS_IAT_ADDRESS ((uintptr_t)0x0046019Cu)
 #define GET_CURSOR_POS_IAT_ADDRESS ((uintptr_t)0x00460204u)
+#define CREATE_WINDOW_EX_A_IAT_ADDRESS ((uintptr_t)0x004601D8u)
 #define EXPERIENCE_GAIN_HOOK_ADDRESS ((uintptr_t)0x00443856u)
 #define EXPERIENCE_DISPLAY_HOOK_ADDRESS ((uintptr_t)0x004437F7u)
 #define MONEY_GAIN_HOOK_ADDRESS ((uintptr_t)0x00439824u)
@@ -53,6 +54,7 @@
 #define ENCOUNTER_REGENERATION_SKIP_ADDRESS ((uintptr_t)0x004037D7u)
 #define ENCOUNTER_HOOK_ALLOCATION_SIZE 0x80u
 #define ENCOUNTER_FEEDBACK_MESSAGE (WM_APP + 0x3A1u)
+#define ENCOUNTER_FEEDBACK_TIMER_ID 0x3A1u
 #define GAME_CLIENT_WIDTH 640
 #define GAME_CLIENT_HEIGHT 480
 #define WIDESCREEN_CLIENT_WIDTH 864
@@ -60,6 +62,8 @@
 
 typedef BOOL (WINAPI *GetCursorPosFn)(LPPOINT);
 typedef BOOL (WINAPI *SetCursorPosFn)(int, int);
+typedef HWND (WINAPI *CreateWindowExAFn)(DWORD, LPCSTR, LPCSTR, DWORD, int, int,
+                                         int, int, HWND, HMENU, HINSTANCE, LPVOID);
 typedef int (__cdecl *EncounterInitFn)(int);
 typedef void (__fastcall *PresentFn)(void *renderer);
 
@@ -85,6 +89,7 @@ static uint32_t GetEncounterRate(void);
 static HINSTANCE g_instance;
 static GetCursorPosFn g_original_get_cursor_pos;
 static SetCursorPosFn g_original_set_cursor_pos;
+static CreateWindowExAFn g_original_create_window_ex_a;
 static volatile LONG g_cursor_hooks_installed;
 static uint32_t g_scale2 = 2;
 static uint32_t g_experience_multiplier = 1;
@@ -108,6 +113,11 @@ static volatile LONG g_window_proc_installed;
 static volatile LONG g_map_frame;
 static volatile LONG g_map_active;
 static volatile LONG g_bink_frame;
+
+static void ResizeGameWindow(HWND window);
+static void UpdateCursorLock(HWND window, bool active);
+static bool InstallCursorHooks(void);
+static bool InstallRuntimeWindowProcedure(void);
 
 enum {
     WINDOW_PROC_NONE = 0,
@@ -395,6 +405,34 @@ static bool InstallCursorHooks(void) {
     DWORD ignored = 0;
     VirtualProtect((LPVOID)start, length, old_protection, &ignored);
     return true;
+}
+
+static HWND WINAPI RuntimeCreateWindowExA(DWORD ex_style, LPCSTR class_name, LPCSTR title,
+                                          DWORD style, int x, int y, int width, int height,
+                                          HWND parent, HMENU menu, HINSTANCE instance,
+                                          LPVOID parameter) {
+    HWND window = g_original_create_window_ex_a(
+        ex_style, class_name, title, style, x, y, width, height,
+        parent, menu, instance, parameter);
+    if (window != NULL && class_name != NULL && strcmp(class_name, "MainWnd") == 0) {
+        WriteRuntimeWindow(window);
+        InstallRuntimeWindowProcedure();
+        if (g_windowed) ResizeGameWindow(window);
+        if (g_cursor_lock) UpdateCursorLock(window, true);
+        if (g_windowed) InstallCursorHooks();
+    }
+    return window;
+}
+
+static bool InstallCreateWindowHook(void) {
+    volatile CreateWindowExAFn *iat =
+        (volatile CreateWindowExAFn *)(uintptr_t)CREATE_WINDOW_EX_A_IAT_ADDRESS;
+    DWORD old_protection;
+    if (!VirtualProtect((LPVOID)iat, sizeof(*iat), PAGE_READWRITE, &old_protection)) return false;
+    g_original_create_window_ex_a = *iat;
+    *iat = RuntimeCreateWindowExA;
+    VirtualProtect((LPVOID)iat, sizeof(*iat), old_protection, &old_protection);
+    return g_original_create_window_ex_a != NULL;
 }
 
 static bool WriteCode(uintptr_t address, const void *data, size_t length) {
@@ -1123,6 +1161,19 @@ static void ResizeGameWindow(HWND window) {
     MoveWindow(window, x, y, width, height, TRUE);
 }
 
+static void UpdateCursorLock(HWND window, bool active) {
+    RECT client;
+    POINT origin = {0, 0};
+    if (!g_cursor_lock || !active || window == NULL || !IsWindow(window)) {
+        ClipCursor(NULL);
+        return;
+    }
+    if (!GetClientRect(window, &client) || !ClientToScreen(window, &origin)) return;
+    OffsetRect(&client, origin.x, origin.y);
+    RECT current;
+    if (!GetClipCursor(&current) || !EqualRect(&current, &client)) ClipCursor(&client);
+}
+
 static const uint32_t kEncounterRates[] = {0, 50, 75, 100, 150, 200, 300};
 
 static size_t FindEncounterRateIndex(uint32_t rate) {
@@ -1161,7 +1212,10 @@ static void ShowEncounterRateFeedback(uint32_t rate) {
                      _TRUNCATE,
                      L"遇敌率：%lu%%",
                      (unsigned long)rate);
-        if (window != NULL) SetWindowTextW(window, title);
+        if (window != NULL) {
+            SetWindowTextW(window, title);
+            SetTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID, 25, NULL);
+        }
         InterlockedExchange(&g_title_restore_due, (LONG)(GetTickCount() + 1500u));
     } else {
         MessageBeep(MB_OK);
@@ -1219,9 +1273,19 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
                                                WPARAM w_param,
                                                LPARAM l_param) {
     if (message == ENCOUNTER_FEEDBACK_MESSAGE) {
+        KillTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID);
         if (InterlockedCompareExchange(&g_window_proc_installed, 0, 0) == WINDOW_PROC_INSTALLED &&
             InterlockedCompareExchange(&g_title_restore_due, 0, 0) == 0) {
             SetWindowTextW(window, g_original_window_title);
+        }
+        return 0;
+    }
+    if (message == WM_TIMER && w_param == ENCOUNTER_FEEDBACK_TIMER_ID) {
+        LONG due = InterlockedCompareExchange(&g_title_restore_due, 0, 0);
+        if (due != 0 && (LONG)(GetTickCount() - (DWORD)due) >= 0) {
+            KillTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID);
+            SetWindowTextW(window, g_original_window_title);
+            InterlockedCompareExchange(&g_title_restore_due, 0, due);
         }
         return 0;
     }
@@ -1246,16 +1310,25 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
         }
     }
 
-    if (message == WM_NCDESTROY) {
+    bool active_message = message == WM_ACTIVATEAPP || message == WM_ACTIVATE ||
+                          message == WM_SETFOCUS || message == WM_KILLFOCUS ||
+                          message == WM_DISPLAYCHANGE || message == WM_SIZE ||
+                          message == WM_WINDOWPOSCHANGED || message == WM_SHOWWINDOW;
+    bool active = message == WM_ACTIVATEAPP ? w_param != FALSE :
+                  message == WM_ACTIVATE ? LOWORD(w_param) != WA_INACTIVE :
+                  message == WM_KILLFOCUS ? false : true;
+    if (message == WM_NCDESTROY && g_cursor_lock) {
+        ClipCursor(NULL);
         InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_DESTROYED);
         WriteRuntimeWindow(NULL);
     }
     if (g_original_window_proc == NULL) return DefWindowProcW(window, message, w_param, l_param);
     LRESULT result = CallWindowProcW(g_original_window_proc, window, message, w_param, l_param);
+    if (g_cursor_lock && active_message) UpdateCursorLock(window, active);
     return result;
 }
 
-static bool InstallEncounterWindowProcedure(void) {
+static bool InstallRuntimeWindowProcedure(void) {
     HWND window = ReadRuntimeWindow();
     if (window == NULL || !IsWindow(window)) return false;
     InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_INSTALLING);
@@ -1275,71 +1348,15 @@ static bool InstallEncounterWindowProcedure(void) {
                                       WINDOW_PROC_INSTALLING) == WINDOW_PROC_INSTALLING;
 }
 
-static void ProcessEncounterTitleFeedback(void) {
-    if (InterlockedCompareExchange(&g_window_proc_installed, 0, 0) != WINDOW_PROC_INSTALLED || !g_windowed) return;
-    HWND window = ReadRuntimeWindow();
-    if (window == NULL) return;
-    LONG due = InterlockedCompareExchange(&g_title_restore_due, 0, 0);
-    if (due == 0 || (LONG)(GetTickCount() - (DWORD)due) < 0) return;
-    if (PostMessageW(window, ENCOUNTER_FEEDBACK_MESSAGE, 0, 0)) {
-        InterlockedCompareExchange(&g_title_restore_due, 0, due);
-    }
-}
-
-static DWORD WINAPI RuntimeWorker(void *parameter) {
-    (void)parameter;
+__declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
     g_scale2 = LoadScale();
     g_windowed = LoadBool(L"Windowed", false);
     g_widescreen = LoadBool(L"Widescreen", false);
     g_cursor_lock = LoadBool(L"CursorLock", false);
-    for (int attempt = 0; attempt < 400; ++attempt) {
-        HWND window = ReadGameWindow();
-        if (window != NULL && IsWindow(window)) {
-            WriteRuntimeWindow(window);
-            break;
-        }
-        Sleep(25);
-    }
-    if (ReadRuntimeWindow() == NULL && g_dynamic_encounter_rate) {
-        for (;;) {
-            HWND window = ReadGameWindow();
-            if (window != NULL && IsWindow(window)) {
-                WriteRuntimeWindow(window);
-                break;
-            }
-            Sleep(25);
-        }
-    }
-    if (ReadRuntimeWindow() == NULL) return 0;
-    if (g_dynamic_encounter_rate && !InstallEncounterWindowProcedure()) {
-        g_dynamic_encounter_rate = false;
-    }
-    for (int attempt = 0; attempt < 20; ++attempt) {
-        HWND window = ReadRuntimeWindow();
-        if (window == NULL || !IsWindow(window)) break;
-        if (g_windowed) {
-            ResizeGameWindow(window);
-            InstallCursorHooks();
-        }
-        ProcessEncounterTitleFeedback();
-        Sleep(100);
-    }
-    while (g_dynamic_encounter_rate) {
-        HWND window = ReadRuntimeWindow();
-        if (window == NULL || !IsWindow(window)) break;
-        ProcessEncounterTitleFeedback();
-        Sleep(25);
-    }
-    return 0;
-}
-
-__declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
     g_previous_exception_filter = SetUnhandledExceptionFilter(RuntimeUnhandledExceptionFilter);
     g_experience_multiplier = LoadMultiplier(L"ExperienceMultiplier");
     g_money_multiplier = LoadMultiplier(L"MoneyMultiplier");
     g_dynamic_encounter_rate = LoadPatchBool(L"DynamicEncounterRate", false);
-    g_windowed = LoadBool(L"Windowed", false);
-    g_widescreen = LoadBool(L"Widescreen", false);
     DWORD settlement_result = InstallSettlementHooks();
     if (settlement_result != 1) return settlement_result;
     if (g_dynamic_encounter_rate) {
@@ -1349,10 +1366,9 @@ __declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
     if (g_widescreen) {
         if (!g_windowed || !InstallWidescreenHooks()) return 241;
     }
-    if (!g_windowed && !g_dynamic_encounter_rate && !g_widescreen) return 1;
-    HANDLE thread = CreateThread(NULL, 0, RuntimeWorker, NULL, 0, NULL);
-    if (thread == NULL) return 0;
-    CloseHandle(thread);
+    if (g_windowed || g_dynamic_encounter_rate) {
+        if (!InstallCreateWindowHook()) return 242;
+    }
     return 1;
 }
 
