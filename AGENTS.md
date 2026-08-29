@@ -24,8 +24,17 @@ Keep each game's launcher and injected runtime under its own directory below `sr
 - Patch only the newly created suspended target process; never modify the original game executable on disk.
 - Keep runtime behavior inside the injected target-process module whenever it must continue after the launcher exits.
 - Separate executable code allocations from writable data allocations.
-- Validate patch sites before writing and choose jump encodings based on the actual displacement.
+- Keep version-specific game addresses in the game's address table and validate every expected byte pattern before writing or installing a hook.
+- Use MinHook for function hooks and imported API hooks (`MH_CreateHook` / `MH_CreateHookApi`); do not locate or overwrite game IAT slots by fixed address.
+- Let MinHook create and relocate trampolines. Do not hand-write trampoline allocation, jump displacement, or runtime-generated machine-code buffers.
+- Put injected x86 instruction blocks in standalone MASM/NASM sources compiled by `ml` or `nasm`; do not assemble instruction bytes in C.
+- If an x86 block must be emitted by an x64 launcher and cannot be built as an assembly object, format the byte sequence by instruction and annotate every instruction in the source.
 - Preserve diagnostic information when investigating crashes. Do not hide a crash by reverting a patch without identifying its cause.
+
+## Dependencies
+
+- Add third-party libraries through CPM.cmake with a pinned version or commit.
+- Credit every third-party library and its license in `README.md`.
 
 ## File hygiene
 

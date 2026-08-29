@@ -40,20 +40,8 @@ enum {
 };
 
 enum {
-    WINDOWED_STYLE_ADDRESS = 0x0040183Au,
-    WINDOWED_RENDERER_MODE_ADDRESS = 0x00405C5Bu,
-    SURFACE_FORMAT_HOOK_ADDRESS = 0x00405BA5u,
-    GAME_WINDOW_HANDLE_ADDRESS = 0x0046F384u,
     GET_MODULE_HANDLE_IAT_ADDRESS = 0x004600C8u,
     GET_PROC_ADDRESS_IAT_ADDRESS = 0x00460090u,
-    BINK_LOCK_DEFAULT_SURFACE_ADDRESS = 0x00406242u,
-    BINK_UNLOCK_DEFAULT_SURFACE_ADDRESS = 0x004062C8u,
-    BINK_SURFACE_FORMAT_ADDRESS = 0x00401BD3u,
-    BINK_PITCH_ADDRESS = 0x00401C01u,
-    BINK_UNLOCK_CALL_ADDRESS = 0x00401C1Fu,
-    BINK_UNLOCK_FUNCTION_ADDRESS = 0x004062C0u,
-    WINDOWED_PRESENT_FUNCTION_ADDRESS = 0x004064E0u,
-    WINDOWED_MOVE_CALL_ADDRESS = 0x00405F17u,
     REMOTE_HOOK_CAPACITY = 0x1000,
 };
 
@@ -95,7 +83,6 @@ static HWND g_experience_multiplier_edit;
 static HWND g_money_multiplier_edit;
 static HWND g_status;
 static HFONT g_font;
-static wchar_t g_game_path[MAX_PATH];
 static DWORD g_runtime_start_result;
 
 static const wchar_t kConfigFileName[] = L"CastlePatches.ini";
@@ -160,33 +147,12 @@ static const PatchSite kMaxGrowthSites[] = {
     {0x00443D7Du, kMaxGrowth3Expected, kMaxGrowth3Replacement, PATCH_LENGTH(kMaxGrowth3Expected)},
 };
 
-static const uint8_t kWindowedStyleExpected[] = {0x68, 0x00, 0x00, 0x00, 0x80};
-static const uint8_t kWindowedStyleReplacement[] = {0x68, 0x00, 0x00, 0xCA, 0x00};
-static const uint8_t kWindowedRendererExpected[] = {0x8A, 0x46, 0x30, 0x84, 0xC0};
-static const uint8_t kWindowedRendererReplacement[] = {0x30, 0xC0, 0x88, 0x46, 0x30};
-static const uint8_t kSurfaceFormatHookExpected[] = {0x8B, 0x10, 0x51, 0x50, 0xFF, 0x52, 0x18};
-static const uint8_t kBinkLockDefaultSurfaceExpected[] = {0x8B, 0x69, 0x04};
-static const uint8_t kBinkLockDefaultSurfaceReplacement[] = {0x8B, 0x69, 0x08};
-static const uint8_t kBinkUnlockDefaultSurfaceExpected[] = {0x8B, 0x41, 0x04};
-static const uint8_t kBinkUnlockDefaultSurfaceReplacement[] = {0x8B, 0x41, 0x08};
-static const uint8_t kBinkSurfaceFormatExpected[] = {0xBF, 0x09, 0x00, 0x00, 0x00};
-static const uint8_t kBinkSurfaceFormatReplacement[] = {0xBF, 0x0A, 0x00, 0x00, 0x00};
-static const uint8_t kBinkPitchExpected[] = {0x8B, 0x49, 0x40};
-static const uint8_t kBinkPitchReplacement[] = {0x8B, 0x49, 0x20};
-static const uint8_t kBinkUnlockCallExpected[] = {0xE8, 0x9C, 0x46, 0x00, 0x00};
-static const PatchSite kWindowedSites[] = {
-    {WINDOWED_STYLE_ADDRESS, kWindowedStyleExpected, kWindowedStyleReplacement, PATCH_LENGTH(kWindowedStyleExpected)},
-    {WINDOWED_RENDERER_MODE_ADDRESS, kWindowedRendererExpected, kWindowedRendererReplacement, PATCH_LENGTH(kWindowedRendererExpected)},
-};
-
 static const PatchGroup kNoCdGroup = {L"免 CD", kNoCdSites, _countof(kNoCdSites)};
 static const PatchGroup kMingyuGroup = {L"修复冥狱杀阵", kMingyuSites, _countof(kMingyuSites)};
 static const PatchGroup kResistanceGroup = {L"修复抗性", kResistanceSites, _countof(kResistanceSites)};
 static const PatchGroup kAnywhereSaveGroup = {L"随时存档", kAnywhereSaveSites, _countof(kAnywhereSaveSites)};
 static const PatchGroup kMaxGrowthGroup = {L"最大成长", kMaxGrowthSites, _countof(kMaxGrowthSites)};
 static const PatchGroup kMaxLootGroup = {L"最大掉宝", kMaxLootSites, _countof(kMaxLootSites)};
-static const PatchGroup kWindowedGroup = {L"窗口模式", kWindowedSites, _countof(kWindowedSites)};
-
 static void SetStatus(const wchar_t *message) {
     SetWindowTextW(g_status, message);
 }
@@ -442,18 +408,6 @@ static size_t EmitDword(uint8_t *buffer, size_t offset, uint32_t value) {
     return offset + sizeof(value);
 }
 
-static bool CalculateRel32(uint32_t source_after_instruction,
-                           uint32_t target,
-                           int32_t *displacement_out) {
-    int64_t displacement = (int64_t)(uint64_t)target -
-                           (int64_t)(uint64_t)source_after_instruction;
-    if (displacement < INT32_MIN || displacement > INT32_MAX) {
-        return false;
-    }
-    *displacement_out = (int32_t)displacement;
-    return true;
-}
-
 static void PatchNearJump(uint8_t *buffer, size_t displacement_offset, size_t target_offset) {
     /* The emitter reserves the five-byte E9 form.  Use EB when the final
        distance fits in int8, and turn the unused tail into NOPs.  Otherwise
@@ -513,311 +467,6 @@ static void PatchConditionalJump(uint8_t *buffer,
 static void EmitPushImm(uint8_t *buffer, size_t *offset, uint32_t value) {
     *offset = EmitByte(buffer, *offset, 0x68);
     *offset = EmitDword(buffer, *offset, value);
-}
-
-static void EmitCallAbs(uint8_t *buffer, size_t *offset, uint32_t address) {
-    *offset = EmitByte(buffer, *offset, 0xFF);
-    *offset = EmitByte(buffer, *offset, 0x15);
-    *offset = EmitDword(buffer, *offset, address);
-}
-
-static size_t BuildSurfaceFormatHook(uint8_t *buffer,
-                                     uint32_t remote_address,
-                                     uint32_t return_address) {
-    g_emit_overflow = false;
-    size_t offset = 0;
-    offset = EmitByte(buffer, offset, 0x60); /* pushad */
-    /* PUSHAD final stack layout is EDI, ESI, EBP, original ESP, EBX, EDX,
-       ECX, EAX; the saved ECX is therefore at [ESP+18h]. */
-    offset = EmitByte(buffer, offset, 0x8B); offset = EmitByte(buffer, offset, 0x44); offset = EmitByte(buffer, offset, 0x24); offset = EmitByte(buffer, offset, 0x18);
-    /* sub_405B30 is shared by the Back and OffScreen allocations.  Its
-       descriptor carries DDSCAPS_OFFSCREENPLAIN (0x40, optionally with the
-       SYSTEMMEMORY bit 0x800) in DDSURFACEDESC2.ddsCaps.dwCaps at +68h.
-       Restrict the format override to that class:
-       callers using this helper for any other surface must retain the
-       original driver-selected format.  The Z-buffer is created directly in
-       sub_405BD0 and never reaches this hook. */
-    offset = EmitByte(buffer, offset, 0xF6); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x68); offset = EmitByte(buffer, offset, 0x40);
-    size_t skip_format_offset = offset;
-    /* Use the rel32 form deliberately.  The hook body may grow as additional
-       guards are added, so a short branch would silently
-       become unsafe once the displacement exceeded 127 bytes. */
-    offset = EmitByte(buffer, offset, 0x0F); offset = EmitByte(buffer, offset, 0x84);
-    offset = EmitDword(buffer, offset, 0u);
-    /* DDSURFACEDESC2.dwFlags |= DDSD_PIXELFORMAT. */
-    offset = EmitByte(buffer, offset, 0x81); offset = EmitByte(buffer, offset, 0x48); offset = EmitByte(buffer, offset, 0x04); offset = EmitDword(buffer, offset, 0x1000);
-    /* DDPIXELFORMAT starts at descriptor +0x48. Force RGB565. */
-    offset = EmitByte(buffer, offset, 0xC7); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x48); offset = EmitDword(buffer, offset, 0x20);
-    offset = EmitByte(buffer, offset, 0xC7); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x4C); offset = EmitDword(buffer, offset, 0x40);
-    offset = EmitByte(buffer, offset, 0xC7); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x54); offset = EmitDword(buffer, offset, 16);
-    offset = EmitByte(buffer, offset, 0xC7); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x58); offset = EmitDword(buffer, offset, 0xF800);
-    offset = EmitByte(buffer, offset, 0xC7); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x5C); offset = EmitDword(buffer, offset, 0x07E0);
-    offset = EmitByte(buffer, offset, 0xC7); offset = EmitByte(buffer, offset, 0x40); offset = EmitByte(buffer, offset, 0x60); offset = EmitDword(buffer, offset, 0x001F);
-    /* Patch the branch using buffer-relative offsets.  The remote base
-       cancels out because source and destination are in the same block. */
-    int32_t skip_format_displacement = (int32_t)offset -
-                                       (int32_t)(skip_format_offset + 6u);
-    memcpy(buffer + skip_format_offset + 2u,
-           &skip_format_displacement,
-           sizeof(skip_format_displacement));
-    offset = EmitByte(buffer, offset, 0x61); /* popad */
-    offset = EmitByte(buffer, offset, 0x8B); offset = EmitByte(buffer, offset, 0x10);
-    offset = EmitByte(buffer, offset, 0x51);
-    offset = EmitByte(buffer, offset, 0x50);
-    offset = EmitByte(buffer, offset, 0xFF); offset = EmitByte(buffer, offset, 0x52); offset = EmitByte(buffer, offset, 0x18);
-    offset = EmitByte(buffer, offset, 0xE9);
-    int32_t displacement = (int32_t)return_address - (int32_t)(remote_address + (uint32_t)offset + 4u);
-    offset = EmitDword(buffer, offset, (uint32_t)displacement);
-    return g_emit_overflow ? 0 : offset;
-}
-
-static bool InstallSurfaceFormatHook(HANDLE process) {
-    uint8_t current[sizeof(kSurfaceFormatHookExpected)];
-    if (!ReadProcessExact(process, SURFACE_FORMAT_HOOK_ADDRESS, current, sizeof(current)) ||
-        memcmp(current, kSurfaceFormatHookExpected, sizeof(current)) != 0) {
-        SetLastError(ERROR_REVISION_MISMATCH);
-        return false;
-    }
-
-    uint8_t hook[REMOTE_HOOK_CAPACITY] = {0};
-    LPVOID remote_memory = VirtualAllocEx(process, NULL, sizeof(hook), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (remote_memory == NULL || (uintptr_t)remote_memory > UINT32_MAX) {
-        if (remote_memory != NULL) VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return false;
-    }
-
-    uint32_t remote_address = (uint32_t)(uintptr_t)remote_memory;
-    size_t hook_size = BuildSurfaceFormatHook(hook,
-                                               remote_address,
-                                               SURFACE_FORMAT_HOOK_ADDRESS + sizeof(kSurfaceFormatHookExpected));
-    if (hook_size == 0) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        SetLastError(ERROR_BUFFER_OVERFLOW);
-        return false;
-    }
-    SIZE_T written = 0;
-    if (!WriteProcessMemory(process, remote_memory, hook, hook_size, &written) || written != hook_size) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        return false;
-    }
-
-    DWORD old_protection = 0;
-    if (!VirtualProtectEx(process, remote_memory, sizeof(hook), PAGE_EXECUTE_READ, &old_protection)) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        return false;
-    }
-
-    uint8_t jump[sizeof(kSurfaceFormatHookExpected)] = {0xE9, 0, 0, 0, 0, 0x90, 0x90};
-    int32_t displacement = (int32_t)remote_address - (int32_t)(SURFACE_FORMAT_HOOK_ADDRESS + 5u);
-    memcpy(jump + 1, &displacement, sizeof(displacement));
-    if (!WriteProtected(process, SURFACE_FORMAT_HOOK_ADDRESS, jump, sizeof(jump))) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        return false;
-    }
-    FlushInstructionCache(process, remote_memory, hook_size);
-    return true;
-}
-
-static bool InstallFullscreenVblankHook(HANDLE process) {
-    static const uint8_t expected[] = {0x8B, 0x76, 0x04, 0x6A, 0x01};
-    uint8_t hook[64] = {
-        0x60,                         /* pushad */
-        0x8B, 0x44, 0x24, 0x04,       /* mov eax,[esp+4] (saved ESI) */
-        0x8B, 0x00,                   /* mov eax,[eax] (IDirectDraw interface) */
-        0x8B, 0x08,                   /* mov ecx,[eax] (vtable) */
-        0x50,                         /* push this */
-        0x6A, 0x00,                   /* push NULL event */
-        0x6A, 0x01,                   /* push DDWAITVB_BLOCKBEGIN */
-        0xFF, 0x51, 0x58,             /* call [ecx+58h] */
-        0x61,                         /* popad */
-        0x8B, 0x76, 0x04,             /* original mov esi,[esi+4] */
-        0x6A, 0x01,                   /* original push 1 */
-        0xE9, 0, 0, 0, 0,             /* return to 4064F2 */
-    };
-    uint8_t current[sizeof(expected)];
-    if (!ReadProcessExact(process, 0x004064EDu, current, sizeof(current)) ||
-        memcmp(current, expected, sizeof(expected)) != 0) {
-        SetLastError(ERROR_REVISION_MISMATCH);
-        return false;
-    }
-    LPVOID remote = VirtualAllocEx(process, NULL, sizeof(hook), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    if (remote == NULL || (uintptr_t)remote > UINT32_MAX) {
-        if (remote != NULL) VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return false;
-    }
-    int32_t return_displacement = (int32_t)0x004064F2u -
-                                  (int32_t)((uintptr_t)remote + 28u);
-    memcpy(hook + 24, &return_displacement, sizeof(return_displacement));
-    SIZE_T written = 0;
-    if (!WriteProcessMemory(process, remote, hook, 28, &written) || written != 28) {
-        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-        return false;
-    }
-    DWORD old_protection = 0;
-    if (!VirtualProtectEx(process, remote, 28, PAGE_EXECUTE_READ, &old_protection)) {
-        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-        return false;
-    }
-    uint8_t jump[sizeof(expected)] = {0xE9, 0, 0, 0, 0};
-    int32_t displacement = (int32_t)(uintptr_t)remote - (int32_t)0x004064F2u;
-    memcpy(jump + 1, &displacement, sizeof(displacement));
-    if (!WriteProtected(process, 0x004064EDu, jump, sizeof(jump))) {
-        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
-        return false;
-    }
-    FlushInstructionCache(process, remote, 28);
-    return true;
-}
-
-/* The original movie path always locks renderer+4 (Primary) and uses the
-   Primary pitch.  That is valid in exclusive full-screen mode, but under
-   DDSCL_NORMAL the Primary uses the desktop format while our game buffers
-   are RGB565.  Render Bink into renderer+8 (Back), then reuse the game's own
-   windowed Back-to-Primary presentation routine. */
-static size_t BuildBinkPresentHook(uint8_t *buffer,
-                                   uint32_t remote_address) {
-    g_emit_overflow = false;
-    size_t offset = 0;
-
-    /* void __thiscall hook(renderer*, IDirectDrawSurface4* ignored_default).
-       Preserve ESI because sub_401BA0 keeps its movie object there. */
-    offset = EmitByte(buffer, offset, 0x56);                         /* push esi */
-    offset = EmitByte(buffer, offset, 0x8B); offset = EmitByte(buffer, offset, 0xF1); /* mov esi,ecx */
-    /* At entry [ESP] is the return address and [ESP+4] is arg0.  After
-       PUSH ESI, the wrapped sub_4062C0 argument is at [ESP+8]. */
-    offset = EmitByte(buffer, offset, 0xFF); offset = EmitByte(buffer, offset, 0x74);
-    offset = EmitByte(buffer, offset, 0x24); offset = EmitByte(buffer, offset, 0x08); /* push [esp+8] */
-    offset = EmitByte(buffer, offset, 0xE8);
-    int32_t unlock_displacement = 0;
-    if (!CalculateRel32(remote_address + (uint32_t)offset + 4u,
-                        BINK_UNLOCK_FUNCTION_ADDRESS,
-                        &unlock_displacement)) {
-        return 0;
-    }
-    offset = EmitDword(buffer, offset, (uint32_t)unlock_displacement);
-    offset = EmitByte(buffer, offset, 0x8B); offset = EmitByte(buffer, offset, 0xCE); /* mov ecx,esi */
-    offset = EmitByte(buffer, offset, 0xE8);
-    int32_t present_displacement = 0;
-    if (!CalculateRel32(remote_address + (uint32_t)offset + 4u,
-                        WINDOWED_PRESENT_FUNCTION_ADDRESS,
-                        &present_displacement)) {
-        return 0;
-    }
-    offset = EmitDword(buffer, offset, (uint32_t)present_displacement);
-    offset = EmitByte(buffer, offset, 0x5E);                         /* pop esi */
-    offset = EmitByte(buffer, offset, 0xC2); offset = EmitByte(buffer, offset, 0x04);
-    offset = EmitByte(buffer, offset, 0x00);                         /* ret 4 */
-    return g_emit_overflow ? 0 : offset;
-}
-
-static bool InstallBinkWindowedHook(HANDLE process) {
-    const PatchSite fixed_sites[] = {
-        {BINK_LOCK_DEFAULT_SURFACE_ADDRESS,
-         kBinkLockDefaultSurfaceExpected,
-         kBinkLockDefaultSurfaceReplacement,
-         PATCH_LENGTH(kBinkLockDefaultSurfaceExpected)},
-        {BINK_UNLOCK_DEFAULT_SURFACE_ADDRESS,
-         kBinkUnlockDefaultSurfaceExpected,
-         kBinkUnlockDefaultSurfaceReplacement,
-         PATCH_LENGTH(kBinkUnlockDefaultSurfaceExpected)},
-        {BINK_SURFACE_FORMAT_ADDRESS,
-         kBinkSurfaceFormatExpected,
-         kBinkSurfaceFormatReplacement,
-         PATCH_LENGTH(kBinkSurfaceFormatExpected)},
-        {BINK_PITCH_ADDRESS,
-         kBinkPitchExpected,
-         kBinkPitchReplacement,
-         PATCH_LENGTH(kBinkPitchExpected)},
-    };
-    const PatchGroup fixed_group = {
-        L"Bink 窗口渲染目标",
-        fixed_sites,
-        _countof(fixed_sites),
-    };
-
-    uint8_t current_call[sizeof(kBinkUnlockCallExpected)];
-    if (!ReadProcessExact(process,
-                          BINK_UNLOCK_CALL_ADDRESS,
-                          current_call,
-                          sizeof(current_call)) ||
-        memcmp(current_call,
-               kBinkUnlockCallExpected,
-               sizeof(current_call)) != 0) {
-        SetLastError(ERROR_REVISION_MISMATCH);
-        return false;
-    }
-
-    /* Validate all fixed sites before allocating or changing any code. */
-    for (size_t index = 0; index < fixed_group.count; ++index) {
-        const PatchSite *site = &fixed_group.sites[index];
-        uint8_t current[8];
-        if (site->length > (uint32_t)sizeof(current) ||
-            !ReadProcessExact(process, site->address, current, site->length) ||
-            memcmp(current, site->expected, site->length) != 0) {
-            SetLastError(ERROR_REVISION_MISMATCH);
-            return false;
-        }
-    }
-
-    uint8_t hook[REMOTE_HOOK_CAPACITY] = {0};
-    LPVOID remote_memory = VirtualAllocEx(process,
-                                          NULL,
-                                          sizeof(hook),
-                                          MEM_RESERVE | MEM_COMMIT,
-                                          PAGE_READWRITE);
-    if (remote_memory == NULL || (uintptr_t)remote_memory > UINT32_MAX) {
-        if (remote_memory != NULL) VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return false;
-    }
-
-    uint32_t remote_address = (uint32_t)(uintptr_t)remote_memory;
-    size_t hook_size = BuildBinkPresentHook(hook, remote_address);
-    SIZE_T written = 0;
-    if (hook_size == 0 ||
-        !WriteProcessMemory(process, remote_memory, hook, hook_size, &written) ||
-        written != hook_size) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        if (hook_size == 0) SetLastError(ERROR_BUFFER_OVERFLOW);
-        return false;
-    }
-
-    DWORD old_protection = 0;
-    if (!VirtualProtectEx(process,
-                          remote_memory,
-                          sizeof(hook),
-                          PAGE_EXECUTE_READ,
-                          &old_protection)) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        return false;
-    }
-    FlushInstructionCache(process, remote_memory, hook_size);
-
-    if (!ApplyPatchGroup(process, &fixed_group)) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        return false;
-    }
-
-    uint8_t call[sizeof(kBinkUnlockCallExpected)] = {0xE8, 0, 0, 0, 0};
-    int32_t displacement = 0;
-    if (!CalculateRel32(BINK_UNLOCK_CALL_ADDRESS + (uint32_t)sizeof(call),
-                        remote_address,
-                        &displacement)) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return false;
-    }
-    memcpy(call + 1, &displacement, sizeof(displacement));
-    if (!WriteProtected(process,
-                        BINK_UNLOCK_CALL_ADDRESS,
-                        call,
-                        sizeof(call))) {
-        VirtualFreeEx(process, remote_memory, 0, MEM_RELEASE);
-        return false;
-    }
-    return true;
 }
 
 static bool GetLauncherDirectory(wchar_t *path, size_t capacity) {
@@ -1152,28 +801,6 @@ static bool ApplySelectedPatches(HANDLE process,
         return false;
     }
 
-    if (!options->windowed) {
-        if (LoadConfigDisplayBool(L"FullscreenVSync", false)) {
-            if (!InstallFullscreenVblankHook(process)) return false;
-        }
-        return true;
-    }
-
-    /* Windowed mode is different: its exact code sites are prerequisites for
-       the surface and Bink hooks below, so a mismatch must abort.  Cursor,
-       resize and clipping are installed by the target-process runtime module. */
-    if (!ApplyPatchGroup(process, &kWindowedGroup)) {
-        return false;
-    }
-
-    /* The windowed Primary surface must use the desktop's native format;
-       DirectDraw rejects a caller-supplied RGB565 pixel format for a Primary
-       surface under DDSCL_NORMAL.  Only the shared Back/OffScreen helper is
-       eligible for the guarded format hook below. */
-    if (!InstallSurfaceFormatHook(process) ||
-        !InstallBinkWindowedHook(process)) {
-        return false;
-    }
     return true;
 }
 

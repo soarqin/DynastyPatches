@@ -32,6 +32,8 @@ cmake --build build --config Release
 - `CastlePatches.exe`：Castle 补丁启动器。
 - `CastleRuntime.dll`：目标游戏进程内的 32 位运行时模块；启用窗口模式、结算倍率或动态遇敌率时使用。
 
+Visual Studio 构建使用 `ml.exe` 编译 runtime 的 x86 汇编；使用其他 CMake 工具链时需要提供 `nasm`。
+
 也可以构建 64 位启动器：
 
 ```powershell
@@ -64,3 +66,8 @@ CastlePatches 的版本由 `cmake/CastlePatchesVersion.cmake` 统一管理，并
 ## 许可
 
 本项目采用 MIT License，详见 `LICENSE`。
+
+## 第三方组件
+
+- [MinHook](https://github.com/TsudaKageyu/minhook)：v1.3.4，通过其原生 CMake target 和 `MH_CreateHook`、`MH_CreateHookApi` 及 trampoline 提供运行时函数和 API hook。MinHook 采用 BSD 2-Clause License。
+- [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake)：v0.40.2，用于获取和配置第三方依赖。CPM.cmake 采用 MIT License。
