@@ -24,6 +24,7 @@ EXTERN g_original_fullscreen_vblank:DWORD
 EXTERN g_original_encounter_initial:DWORD
 EXTERN g_experience_multiplier:DWORD
 EXTERN g_money_multiplier:DWORD
+EXTERN g_runtime_shutting_down:DWORD
 
 PUBLIC SurfaceFormatHook
 PUBLIC RendererWidthHook
@@ -118,9 +119,12 @@ BinkPresentCallHook PROC
     push DWORD PTR [esp+4]
     mov eax, CASTLE_BINK_UNLOCK_FUNCTION_ADDRESS
     call eax
+    cmp DWORD PTR [g_runtime_shutting_down], 0
+    jne bink_skip_present
     mov ecx, esi
     mov eax, CASTLE_WINDOWED_PRESENT_FUNCTION_ADDRESS
     call eax
+bink_skip_present:
     pop esi
     add esp, 4
     mov eax, CASTLE_BINK_PRESENT_CONTINUE_ADDRESS

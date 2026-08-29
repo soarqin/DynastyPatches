@@ -78,6 +78,7 @@ static volatile LONG g_window_proc_installed;
 static volatile LONG g_map_frame;
 static volatile LONG g_map_active;
 static volatile LONG g_bink_frame;
+volatile LONG g_runtime_shutting_down;
 
 static void ResizeGameWindow(HWND window);
 static void UpdateCursorLock(HWND window, bool active);
@@ -136,6 +137,10 @@ static void WriteRuntimeWindow(HWND window) {
 
 static HWND ReadGameWindow(void) {
     return *(HWND *)(uintptr_t)GAME_WINDOW_HANDLE_ADDRESS;
+}
+
+static bool IsRuntimeShuttingDown(void) {
+    return InterlockedCompareExchange(&g_runtime_shutting_down, 0, 0) != 0;
 }
 
 static LONG WINAPI RuntimeUnhandledExceptionFilter(EXCEPTION_POINTERS *exception) {
@@ -228,6 +233,7 @@ static bool GetFixedViewport(HWND window, RECT *viewport) {
 
 static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
     if (g_original_get_cursor_pos == NULL || point == NULL || !g_original_get_cursor_pos(point)) return FALSE;
+    if (IsRuntimeShuttingDown()) return TRUE;
     HWND window = ReadRuntimeWindow();
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window) || !ScreenToClient(window, point)) return FALSE;
@@ -254,6 +260,7 @@ static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
 
 static BOOL WINAPI RuntimeSetCursorPos(int x, int y) {
     if (g_original_set_cursor_pos == NULL) return FALSE;
+    if (IsRuntimeShuttingDown()) return g_original_set_cursor_pos(x, y);
     HWND window = ReadRuntimeWindow();
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window)) return FALSE;
@@ -289,6 +296,7 @@ static HWND WINAPI RuntimeCreateWindowExA(DWORD ex_style, LPCSTR class_name, LPC
         ex_style, class_name, title, style, x, y, width, height,
         parent, menu, instance, parameter);
     if (window != NULL && class_name != NULL && strcmp(class_name, "MainWnd") == 0) {
+        InterlockedExchange(&g_runtime_shutting_down, 0);
         WriteRuntimeWindow(window);
         InstallRuntimeWindowProcedure();
         if (g_windowed) ResizeGameWindow(window);
@@ -456,6 +464,7 @@ static bool PresentBinkCentered(uintptr_t renderer) {
 
 static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     (void)unused_edx;
+    if (IsRuntimeShuttingDown()) return;
     bool map_frame = InterlockedExchange(&g_map_frame, 0) != 0;
     bool bink_frame = InterlockedExchange(&g_bink_frame, 0) != 0;
     InterlockedExchange(&g_map_active, map_frame ? 1 : 0);
@@ -931,8 +940,12 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
     bool active = message == WM_ACTIVATEAPP ? w_param != FALSE :
                   message == WM_ACTIVATE ? LOWORD(w_param) != WA_INACTIVE :
                   message == WM_KILLFOCUS ? false : true;
-    if (message == WM_NCDESTROY && g_cursor_lock) {
-        ClipCursor(NULL);
+    if (message == WM_CLOSE || message == WM_DESTROY || message == WM_NCDESTROY) {
+        InterlockedExchange(&g_runtime_shutting_down, 1);
+    }
+    if (message == WM_NCDESTROY) {
+        if (g_cursor_lock) ClipCursor(NULL);
+        KillTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID);
         InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_DESTROYED);
         WriteRuntimeWindow(NULL);
     }

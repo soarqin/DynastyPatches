@@ -22,6 +22,7 @@ extern _g_original_fullscreen_vblank
 extern _g_original_encounter_initial
 extern _g_experience_multiplier
 extern _g_money_multiplier
+extern _g_runtime_shutting_down
 
 global _SurfaceFormatHook
 global _RendererWidthHook
@@ -108,9 +109,12 @@ _BinkPresentCallHook:
     push dword [esp+4]
     mov eax, CASTLE_BINK_UNLOCK_FUNCTION_ADDRESS
     call eax
+    cmp dword [_g_runtime_shutting_down], 0
+    jne .bink_skip_present
     mov ecx, esi
     mov eax, CASTLE_WINDOWED_PRESENT_FUNCTION_ADDRESS
     call eax
+.bink_skip_present:
     pop esi
     add esp, 4
     mov eax, CASTLE_BINK_PRESENT_CONTINUE_ADDRESS
