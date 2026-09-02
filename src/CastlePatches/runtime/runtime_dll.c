@@ -17,6 +17,7 @@
 #define ENCOUNTER_FEEDBACK_MESSAGE (WM_APP + 0x3A1u)
 #define ENCOUNTER_FEEDBACK_TIMER_ID 0x3A1u
 #define HOOK_ADDRESS(function) ((LPVOID)(uintptr_t)(function))
+#define VIDEO_STATE_ADDRESS ((uintptr_t)0x0046F390u)
 
 typedef BOOL (WINAPI *GetCursorPosFn)(LPPOINT);
 typedef BOOL (WINAPI *SetCursorPosFn)(int, int);
@@ -24,6 +25,8 @@ typedef HWND (WINAPI *CreateWindowExAFn)(DWORD, LPCSTR, LPCSTR, DWORD, int, int,
                                          int, int, HWND, HMENU, HINSTANCE, LPVOID);
 typedef int (__cdecl *EncounterInitFn)(int);
 typedef void (__fastcall *PresentFn)(void *renderer);
+typedef void (__fastcall *TimerSetupFn)(void *timer, void *unused_edx);
+typedef void (__cdecl *GameLogicTickFn)(void);
 
 void SurfaceFormatHook(void);
 void RendererWidthHook(void);
@@ -41,6 +44,9 @@ void MoneyGainHook(void);
 void MoneyDisplayHook(void);
 void EncounterInitialHook(void);
 void EncounterRegenerationHook(void);
+void FramePacingTimerSetupHook(void);
+void GameLogicTickHook(void);
+void CursorPositionHook(void);
 
 static uint32_t GetEncounterRate(void);
 
@@ -65,10 +71,15 @@ void *g_original_bink_frame;
 void *g_original_fullscreen_vblank;
 void *g_original_encounter_initial;
 PresentFn g_original_present;
+TimerSetupFn g_original_timer_setup;
+GameLogicTickFn g_original_game_logic_tick;
+void *g_original_cursor_position;
 static bool g_dynamic_encounter_rate;
 static bool g_windowed;
 static bool g_widescreen;
 static bool g_encounter_map_enabled;
+static bool g_frame_pacing;
+static uint32_t g_game_logic_tick;
 static LPTOP_LEVEL_EXCEPTION_FILTER g_previous_exception_filter;
 static wchar_t g_original_window_title[256];
 static WNDPROC g_original_window_proc;
@@ -77,6 +88,7 @@ static volatile LONG g_title_restore_due;
 static volatile LONG g_window_proc_installed;
 static volatile LONG g_map_frame;
 static volatile LONG g_map_active;
+static volatile LONG g_map_frame_misses;
 static volatile LONG g_bink_frame;
 volatile LONG g_runtime_shutting_down;
 
@@ -349,6 +361,52 @@ static bool InstallGameHook(uintptr_t address,
     return MH_EnableHook((LPVOID)address) == MH_OK;
 }
 
+static bool InstallFramePacingHooks(void) {
+    static const uint8_t timer_expected[] = {
+        0x83, 0xEC, 0x08, 0x53, 0x56, 0x8B, 0xF1, 0x33,
+    };
+    static const uint8_t logic_expected[] = {
+        0x8B, 0x15, 0xD4, 0x40, 0x8C, 0x00, 0x56, 0x33,
+    };
+    if (memcmp((const void *)TIMER_SETUP_HOOK_ADDRESS, timer_expected, sizeof(timer_expected)) != 0 ||
+        memcmp((const void *)LOGIC_OBJECT_RESET_HOOK_ADDRESS, logic_expected, sizeof(logic_expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
+    if (MH_CreateHook((LPVOID)TIMER_SETUP_HOOK_ADDRESS, HOOK_ADDRESS(FramePacingTimerSetupHook),
+                      (LPVOID *)&g_original_timer_setup) != MH_OK) {
+        SetLastError(ERROR_FUNCTION_FAILED);
+        return false;
+    }
+    if (MH_EnableHook((LPVOID)TIMER_SETUP_HOOK_ADDRESS) != MH_OK) {
+        SetLastError(ERROR_FUNCTION_FAILED);
+        return false;
+    }
+    if (MH_CreateHook((LPVOID)LOGIC_OBJECT_RESET_HOOK_ADDRESS, HOOK_ADDRESS(GameLogicTickHook),
+                      (LPVOID *)&g_original_game_logic_tick) != MH_OK ||
+        MH_EnableHook((LPVOID)LOGIC_OBJECT_RESET_HOOK_ADDRESS) != MH_OK) {
+        SetLastError(ERROR_FUNCTION_FAILED);
+        return false;
+    }
+    return true;
+}
+
+void PrepareFrameTimer(void) {
+    volatile uint32_t *interval = (volatile uint32_t *)(uintptr_t)0x0046F6B8u;
+    uint32_t value = *interval;
+    *interval = value > 3u ? (value + 2u) / 3u : 1u;
+}
+
+int ShouldRunGameLogic(void) {
+    g_game_logic_tick = (g_game_logic_tick + 1u) % 3u;
+    return g_game_logic_tick == 0u;
+}
+
+void __cdecl AdjustCursorPosition(void *object, int *x) {
+    if (!g_widescreen || IsMapActive() || object != *(void **)(uintptr_t)0x0089F7E0u) return;
+    *x += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+}
+
 static bool PatchEffectStride(uintptr_t address) {
     static const uint8_t expected[] = {0x68, 0x00, 0x03, 0x00, 0x00};
     static const uint8_t replacement[] = {0x68, 0xE0, 0x03, 0x00, 0x00};
@@ -467,11 +525,22 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     if (IsRuntimeShuttingDown()) return;
     bool map_frame = InterlockedExchange(&g_map_frame, 0) != 0;
     bool bink_frame = InterlockedExchange(&g_bink_frame, 0) != 0;
-    InterlockedExchange(&g_map_active, map_frame ? 1 : 0);
+    if (map_frame) {
+        InterlockedExchange(&g_map_frame_misses, 0);
+        InterlockedExchange(&g_map_active, 1);
+    } else if (g_frame_pacing && IsMapActive()) {
+        if (InterlockedIncrement(&g_map_frame_misses) >= 3) {
+            InterlockedExchange(&g_map_frame_misses, 0);
+            InterlockedExchange(&g_map_active, 0);
+        }
+    } else {
+        InterlockedExchange(&g_map_frame_misses, 0);
+        InterlockedExchange(&g_map_active, 0);
+    }
     if (bink_frame) {
         (void)PresentBinkCentered((uintptr_t)renderer);
     } else {
-        if (!map_frame) (void)ComposeFixedFrame((uintptr_t)renderer);
+        if (!IsMapActive()) (void)ComposeFixedFrame((uintptr_t)renderer);
         if (g_original_present != NULL) g_original_present(renderer);
     }
 }
@@ -486,6 +555,9 @@ static bool InstallWidescreenHooks(void) {
     };
     static const uint8_t bink_frame_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
+    };
+    static const uint8_t cursor_position_expected[] = {
+        0x8B, 0x44, 0x24, 0x04, 0x8B, 0x54, 0x24, 0x08,
     };
     static const uint8_t map_ui_sprite_expected[] = {
         0x51, 0x56, 0x8B, 0xF1, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,
@@ -536,8 +608,8 @@ static bool InstallWidescreenHooks(void) {
                 camera_left_reposition_expected,
                 sizeof(camera_left_reposition_expected)) != 0 ||
          memcmp((const void *)MAP_CAMERA_RIGHT_REPOSITION_ADDRESS,
-                camera_right_reposition_expected,
-                sizeof(camera_right_reposition_expected)) != 0) {
+                 camera_right_reposition_expected,
+                 sizeof(camera_right_reposition_expected)) != 0) {
         SetLastError(ERROR_REVISION_MISMATCH);
         return false;
     }
@@ -554,22 +626,22 @@ static bool InstallWidescreenHooks(void) {
         !WriteCode(MAP_CAMERA_RIGHT_REPOSITION_ADDRESS,
                    camera_right_reposition_replacement,
                    sizeof(camera_right_reposition_replacement)) ||
-        !InstallGameHook(RENDERER_WIDTH_HOOK_ADDRESS,
-                         renderer_width_expected,
-                         sizeof(renderer_width_expected),
-                          HOOK_ADDRESS(RendererWidthHook),
-                         &g_original_renderer_width) ||
-        !InstallGameHook(MAP_RENDER_HOOK_ADDRESS,
-                         map_render_expected,
-                         sizeof(map_render_expected),
-                         HOOK_ADDRESS(MapRenderHook),
-                         &g_original_map_render) ||
-        !InstallGameHook(PRESENT_FUNCTION_ADDRESS,
-                         present_expected,
-                         sizeof(present_expected),
-                         HOOK_ADDRESS(RuntimePresent),
-                         (LPVOID *)&g_original_present) ||
-        !InstallGameHook(MAP_UI_SPRITE_HOOK_ADDRESS,
+         !InstallGameHook(RENDERER_WIDTH_HOOK_ADDRESS,
+                          renderer_width_expected,
+                          sizeof(renderer_width_expected),
+                           HOOK_ADDRESS(RendererWidthHook),
+                          &g_original_renderer_width) ||
+         !InstallGameHook(MAP_RENDER_HOOK_ADDRESS,
+                          map_render_expected,
+                          sizeof(map_render_expected),
+                          HOOK_ADDRESS(MapRenderHook),
+                          &g_original_map_render) ||
+         !InstallGameHook(PRESENT_FUNCTION_ADDRESS,
+                          present_expected,
+                          sizeof(present_expected),
+                          HOOK_ADDRESS(RuntimePresent),
+                          (LPVOID *)&g_original_present) ||
+         !InstallGameHook(MAP_UI_SPRITE_HOOK_ADDRESS,
                          map_ui_sprite_expected,
                          sizeof(map_ui_sprite_expected),
                          HOOK_ADDRESS(MapUiSpriteHook),
@@ -589,11 +661,16 @@ static bool InstallWidescreenHooks(void) {
                          sizeof(glyph_blit_expected),
                          HOOK_ADDRESS(GlyphBlitHook),
                          &g_original_glyph_blit) ||
-        !InstallGameHook(BINK_FRAME_FUNCTION_ADDRESS,
-                         bink_frame_expected,
-                         sizeof(bink_frame_expected),
-                         HOOK_ADDRESS(BinkFrameHook),
-                         &g_original_bink_frame)) {
+         !InstallGameHook(BINK_FRAME_FUNCTION_ADDRESS,
+                          bink_frame_expected,
+                          sizeof(bink_frame_expected),
+                          HOOK_ADDRESS(BinkFrameHook),
+                          &g_original_bink_frame) ||
+         !InstallGameHook(CURSOR_POSITION_HOOK_ADDRESS,
+                          cursor_position_expected,
+                          sizeof(cursor_position_expected),
+                          HOOK_ADDRESS(CursorPositionHook),
+                          (LPVOID *)&g_original_cursor_position)) {
         return false;
     }
     if (!PatchEffectStride(EFFECT_STRIDE_1_ADDRESS) ||
@@ -984,7 +1061,9 @@ __declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
     g_experience_multiplier = LoadMultiplier(L"ExperienceMultiplier");
     g_money_multiplier = LoadMultiplier(L"MoneyMultiplier");
     g_dynamic_encounter_rate = LoadPatchBool(L"DynamicEncounterRate", false);
+    g_frame_pacing = LoadPatchBool(L"FramePacing60", true);
     if (MH_Initialize() != MH_OK) return 243;
+    if (g_frame_pacing && !InstallFramePacingHooks()) return 246;
     DWORD settlement_result = InstallSettlementHooks();
     if (settlement_result != 1) return settlement_result;
     if (g_dynamic_encounter_rate) {
@@ -996,7 +1075,7 @@ __declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
     }
     if (g_windowed && !InstallWindowedHooks()) return 244;
     if (!g_windowed && LoadBool(L"FullscreenVSync", false) && !InstallFullscreenVblankHook()) return 245;
-    if (g_windowed || g_dynamic_encounter_rate) {
+    if (g_windowed || g_dynamic_encounter_rate || g_frame_pacing) {
         if (!InstallCreateWindowHook()) return 242;
     }
     return 1;

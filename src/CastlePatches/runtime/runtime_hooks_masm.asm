@@ -11,6 +11,9 @@ EXTERN MarkBinkFrame:PROC
 EXTERN OffsetMapUiSpriteX:PROC
 EXTERN ApplyEncounterInitialRate:PROC
 EXTERN ApplyEncounterThresholdRate:PROC
+EXTERN PrepareFrameTimer:PROC
+EXTERN ShouldRunGameLogic:PROC
+EXTERN AdjustCursorPosition:PROC
 
 EXTERN g_original_surface_format:DWORD
 EXTERN g_original_renderer_width:DWORD
@@ -25,6 +28,9 @@ EXTERN g_original_encounter_initial:DWORD
 EXTERN g_experience_multiplier:DWORD
 EXTERN g_money_multiplier:DWORD
 EXTERN g_runtime_shutting_down:DWORD
+EXTERN g_original_timer_setup:DWORD
+EXTERN g_original_game_logic_tick:DWORD
+EXTERN g_original_cursor_position:DWORD
 
 PUBLIC SurfaceFormatHook
 PUBLIC RendererWidthHook
@@ -42,6 +48,9 @@ PUBLIC MoneyGainHook
 PUBLIC MoneyDisplayHook
 PUBLIC EncounterInitialHook
 PUBLIC EncounterRegenerationHook
+PUBLIC FramePacingTimerSetupHook
+PUBLIC GameLogicTickHook
+PUBLIC CursorPositionHook
 
 .code
 
@@ -208,5 +217,36 @@ encounter_regeneration_return:
     push CASTLE_ENCOUNTER_REGENERATION_RETURN_ADDRESS
     ret
 EncounterRegenerationHook ENDP
+
+FramePacingTimerSetupHook PROC
+    pushad
+    call PrepareFrameTimer
+    popad
+    jmp DWORD PTR [g_original_timer_setup]
+FramePacingTimerSetupHook ENDP
+
+GameLogicTickHook PROC
+    pushad
+    call ShouldRunGameLogic
+    test eax, eax
+    jz game_logic_tick_skip
+    popad
+    jmp DWORD PTR [g_original_game_logic_tick]
+game_logic_tick_skip:
+    popad
+    ret
+GameLogicTickHook ENDP
+
+CursorPositionHook PROC
+    pushad
+    mov eax, DWORD PTR [esp+18h]
+    lea edx, DWORD PTR [esp+10h]
+    push edx
+    push eax
+    call AdjustCursorPosition
+    add esp, 8
+    popad
+    jmp DWORD PTR [g_original_cursor_position]
+CursorPositionHook ENDP
 
 END

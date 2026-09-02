@@ -23,6 +23,9 @@ extern _g_original_encounter_initial
 extern _g_experience_multiplier
 extern _g_money_multiplier
 extern _g_runtime_shutting_down
+extern _PrepareFrameTimer
+extern _ShouldRunGameLogic
+extern _AdjustCursorPosition
 
 global _SurfaceFormatHook
 global _RendererWidthHook
@@ -40,6 +43,9 @@ global _MoneyGainHook
 global _MoneyDisplayHook
 global _EncounterInitialHook
 global _EncounterRegenerationHook
+extern _g_original_timer_setup
+extern _g_original_game_logic_tick
+extern _g_original_cursor_position
 
 section .text
 
@@ -190,3 +196,31 @@ _EncounterRegenerationHook:
 .encounter_regeneration_return:
     push CASTLE_ENCOUNTER_REGENERATION_RETURN_ADDRESS
     ret
+
+_FramePacingTimerSetupHook:
+    pushad
+    call _PrepareFrameTimer
+    popad
+    jmp [_g_original_timer_setup]
+
+_GameLogicTickHook:
+    pushad
+    call _ShouldRunGameLogic
+    test eax, eax
+    jz .game_logic_tick_skip
+    popad
+    jmp [_g_original_game_logic_tick]
+.game_logic_tick_skip:
+    popad
+    ret
+
+_CursorPositionHook:
+    pushad
+    mov eax, [esp+0x18]
+    lea edx, [esp+0x10]
+    push edx
+    push eax
+    call _AdjustCursorPosition
+    add esp, 8
+    popad
+    jmp [_g_original_cursor_position]
