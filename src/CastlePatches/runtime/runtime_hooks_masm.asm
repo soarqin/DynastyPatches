@@ -13,7 +13,6 @@ EXTERN ApplyEncounterInitialRate:PROC
 EXTERN ApplyEncounterThresholdRate:PROC
 EXTERN PrepareFrameTimer:PROC
 EXTERN ShouldRunGameLogic:PROC
-EXTERN AdjustCursorPosition:PROC
 
 EXTERN g_original_surface_format:DWORD
 EXTERN g_original_renderer_width:DWORD
@@ -30,7 +29,6 @@ EXTERN g_money_multiplier:DWORD
 EXTERN g_runtime_shutting_down:DWORD
 EXTERN g_original_timer_setup:DWORD
 EXTERN g_original_game_logic_tick:DWORD
-EXTERN g_original_cursor_position:DWORD
 
 PUBLIC SurfaceFormatHook
 PUBLIC RendererWidthHook
@@ -50,7 +48,6 @@ PUBLIC EncounterInitialHook
 PUBLIC EncounterRegenerationHook
 PUBLIC FramePacingTimerSetupHook
 PUBLIC GameLogicTickHook
-PUBLIC CursorPositionHook
 
 .code
 
@@ -236,17 +233,5 @@ game_logic_tick_skip:
     popad
     ret
 GameLogicTickHook ENDP
-
-CursorPositionHook PROC
-    pushad
-    mov eax, DWORD PTR [esp+18h]
-    lea edx, DWORD PTR [esp+10h]
-    push edx
-    push eax
-    call AdjustCursorPosition
-    add esp, 8
-    popad
-    jmp DWORD PTR [g_original_cursor_position]
-CursorPositionHook ENDP
 
 END

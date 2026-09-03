@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <intrin.h>
 #include <ddraw.h>
 #include <dbghelp.h>
 #include <MinHook.h>
@@ -46,7 +47,6 @@ void EncounterInitialHook(void);
 void EncounterRegenerationHook(void);
 void FramePacingTimerSetupHook(void);
 void GameLogicTickHook(void);
-void CursorPositionHook(void);
 
 static uint32_t GetEncounterRate(void);
 
@@ -73,7 +73,6 @@ void *g_original_encounter_initial;
 PresentFn g_original_present;
 TimerSetupFn g_original_timer_setup;
 GameLogicTickFn g_original_game_logic_tick;
-void *g_original_cursor_position;
 static bool g_dynamic_encounter_rate;
 static bool g_windowed;
 static bool g_widescreen;
@@ -88,6 +87,7 @@ static volatile LONG g_title_restore_due;
 static volatile LONG g_window_proc_installed;
 static volatile LONG g_map_frame;
 static volatile LONG g_map_active;
+static volatile LONG g_cursor_map_active;
 static volatile LONG g_map_frame_misses;
 static volatile LONG g_bink_frame;
 volatile LONG g_runtime_shutting_down;
@@ -201,6 +201,10 @@ static bool IsMapActive(void) {
     return InterlockedCompareExchange(&g_map_active, 0, 0) != 0;
 }
 
+static bool IsCursorMapActive(void) {
+    return InterlockedCompareExchange(&g_cursor_map_active, 0, 0) != 0;
+}
+
 void __cdecl ApplySurfaceFormat(void *descriptor) {
     if (descriptor == NULL || (*(const uint32_t *)((const uint8_t *)descriptor + 0x68u) & 0x40u) == 0) {
         return;
@@ -250,7 +254,8 @@ static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window) || !ScreenToClient(window, point)) return FALSE;
 
-    if (g_widescreen && !IsMapActive()) {
+    bool game_cursor = (uintptr_t)_ReturnAddress() == CURSOR_UPDATE_GET_CURSOR_RETURN_ADDRESS;
+    if (g_widescreen && !game_cursor && !IsCursorMapActive()) {
         RECT viewport;
         if (!GetFixedViewport(window, &viewport)) return FALSE;
         if (!PtInRect(&viewport, *point)) {
@@ -277,7 +282,7 @@ static BOOL WINAPI RuntimeSetCursorPos(int x, int y) {
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window)) return FALSE;
     POINT point;
-    if (g_widescreen && !IsMapActive()) {
+    if (g_widescreen) {
         RECT viewport;
         if (!GetFixedViewport(window, &viewport)) return FALSE;
         point.x = viewport.left + (LONG)(((int64_t)x * (viewport.right - viewport.left)) /
@@ -307,13 +312,13 @@ static HWND WINAPI RuntimeCreateWindowExA(DWORD ex_style, LPCSTR class_name, LPC
     HWND window = g_original_create_window_ex_a(
         ex_style, class_name, title, style, x, y, width, height,
         parent, menu, instance, parameter);
-    if (window != NULL && class_name != NULL && strcmp(class_name, "MainWnd") == 0) {
+        if (window != NULL && class_name != NULL && strcmp(class_name, "MainWnd") == 0) {
         InterlockedExchange(&g_runtime_shutting_down, 0);
         WriteRuntimeWindow(window);
         InstallRuntimeWindowProcedure();
         if (g_windowed) ResizeGameWindow(window);
-        if (g_cursor_lock) UpdateCursorLock(window, true);
-        if (g_windowed) InstallCursorHooks();
+            UpdateCursorLock(window, true);
+            if (g_windowed) InstallCursorHooks();
     }
     return window;
 }
@@ -400,11 +405,6 @@ void PrepareFrameTimer(void) {
 int ShouldRunGameLogic(void) {
     g_game_logic_tick = (g_game_logic_tick + 1u) % 3u;
     return g_game_logic_tick == 0u;
-}
-
-void __cdecl AdjustCursorPosition(void *object, int *x) {
-    if (!g_widescreen || IsMapActive() || object != *(void **)(uintptr_t)0x0089F7E0u) return;
-    *x += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
 }
 
 static bool PatchEffectStride(uintptr_t address) {
@@ -528,7 +528,9 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     if (map_frame) {
         InterlockedExchange(&g_map_frame_misses, 0);
         InterlockedExchange(&g_map_active, 1);
+        InterlockedExchange(&g_cursor_map_active, 1);
     } else if (g_frame_pacing && IsMapActive()) {
+        InterlockedExchange(&g_cursor_map_active, 0);
         if (InterlockedIncrement(&g_map_frame_misses) >= 3) {
             InterlockedExchange(&g_map_frame_misses, 0);
             InterlockedExchange(&g_map_active, 0);
@@ -536,6 +538,7 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     } else {
         InterlockedExchange(&g_map_frame_misses, 0);
         InterlockedExchange(&g_map_active, 0);
+        InterlockedExchange(&g_cursor_map_active, 0);
     }
     if (bink_frame) {
         (void)PresentBinkCentered((uintptr_t)renderer);
@@ -555,9 +558,6 @@ static bool InstallWidescreenHooks(void) {
     };
     static const uint8_t bink_frame_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
-    };
-    static const uint8_t cursor_position_expected[] = {
-        0x8B, 0x44, 0x24, 0x04, 0x8B, 0x54, 0x24, 0x08,
     };
     static const uint8_t map_ui_sprite_expected[] = {
         0x51, 0x56, 0x8B, 0xF1, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,
@@ -665,12 +665,7 @@ static bool InstallWidescreenHooks(void) {
                           bink_frame_expected,
                           sizeof(bink_frame_expected),
                           HOOK_ADDRESS(BinkFrameHook),
-                          &g_original_bink_frame) ||
-         !InstallGameHook(CURSOR_POSITION_HOOK_ADDRESS,
-                          cursor_position_expected,
-                          sizeof(cursor_position_expected),
-                          HOOK_ADDRESS(CursorPositionHook),
-                          (LPVOID *)&g_original_cursor_position)) {
+                          &g_original_bink_frame)) {
         return false;
     }
     if (!PatchEffectStride(EFFECT_STRIDE_1_ADDRESS) ||
@@ -1021,14 +1016,15 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
         InterlockedExchange(&g_runtime_shutting_down, 1);
     }
     if (message == WM_NCDESTROY) {
-        if (g_cursor_lock) ClipCursor(NULL);
+        ClipCursor(NULL);
         KillTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID);
         InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_DESTROYED);
         WriteRuntimeWindow(NULL);
     }
+    if (active_message && !active) UpdateCursorLock(window, false);
     if (g_original_window_proc == NULL) return DefWindowProcW(window, message, w_param, l_param);
     LRESULT result = CallWindowProcW(g_original_window_proc, window, message, w_param, l_param);
-    if (g_cursor_lock && active_message) UpdateCursorLock(window, active);
+    if (active_message && active) UpdateCursorLock(window, true);
     return result;
 }
 
