@@ -28,6 +28,7 @@ typedef int (__cdecl *EncounterInitFn)(int);
 typedef void (__fastcall *PresentFn)(void *renderer);
 typedef void (__fastcall *TimerSetupFn)(void *timer, void *unused_edx);
 typedef void (__cdecl *GameLogicTickFn)(void);
+typedef void (__fastcall *UiCursorDrawFn)(void *input_manager);
 
 void SurfaceFormatHook(void);
 void RendererWidthHook(void);
@@ -73,6 +74,7 @@ void *g_original_encounter_initial;
 PresentFn g_original_present;
 TimerSetupFn g_original_timer_setup;
 GameLogicTickFn g_original_game_logic_tick;
+static UiCursorDrawFn g_original_ui_cursor_draw;
 static bool g_dynamic_encounter_rate;
 static bool g_windowed;
 static bool g_widescreen;
@@ -548,6 +550,20 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     }
 }
 
+/* When the map scene draws in a frame, that frame is presented without the
+   centered 4:3 compose.  If the fixed-UI cursor was already sampled in centered
+   640-space (IsCursorMapActive() == false), shift it back by the centering
+   offset so it does not appear one frame to the left of the map cursor while
+   the switch to a fullscreen UI is in progress. */
+static void __fastcall RuntimeUiCursorDraw(void *input_manager, void *unused_edx) {
+    (void)unused_edx;
+    bool shift = InterlockedCompareExchange(&g_map_frame, 0, 0) != 0 && !IsCursorMapActive();
+    int32_t *cache_x = (int32_t *)((uint8_t *)input_manager + 0x238u);
+    if (shift) *cache_x += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+    if (g_original_ui_cursor_draw != NULL) g_original_ui_cursor_draw(input_manager);
+    if (shift) *cache_x -= (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+}
+
 static bool InstallWidescreenHooks(void) {
     static const uint8_t renderer_width_expected[] = {0xE8, 0xDC, 0x43, 0x00, 0x00};
     static const uint8_t map_render_expected[] = {
@@ -558,6 +574,9 @@ static bool InstallWidescreenHooks(void) {
     };
     static const uint8_t bink_frame_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
+    };
+    static const uint8_t ui_cursor_draw_expected[] = {
+        0x8A, 0x81, 0x48, 0x02, 0x00, 0x00, 0x84, 0xC0, 0x74, 0x30,
     };
     static const uint8_t map_ui_sprite_expected[] = {
         0x51, 0x56, 0x8B, 0xF1, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,
@@ -598,6 +617,9 @@ static bool InstallWidescreenHooks(void) {
         memcmp((const void *)GLYPH_BLIT_HOOK_ADDRESS,
                glyph_blit_expected,
                sizeof(glyph_blit_expected)) != 0 ||
+        memcmp((const void *)UI_CURSOR_DRAW_HOOK_ADDRESS,
+               ui_cursor_draw_expected,
+               sizeof(ui_cursor_draw_expected)) != 0 ||
         memcmp((const void *)MAP_CAMERA_LEFT_ADDRESS,
                camera_left_expected,
                sizeof(camera_left_expected)) != 0 ||
@@ -661,6 +683,11 @@ static bool InstallWidescreenHooks(void) {
                          sizeof(glyph_blit_expected),
                          HOOK_ADDRESS(GlyphBlitHook),
                          &g_original_glyph_blit) ||
+         !InstallGameHook(UI_CURSOR_DRAW_HOOK_ADDRESS,
+                          ui_cursor_draw_expected,
+                          sizeof(ui_cursor_draw_expected),
+                          HOOK_ADDRESS(RuntimeUiCursorDraw),
+                          (LPVOID *)&g_original_ui_cursor_draw) ||
          !InstallGameHook(BINK_FRAME_FUNCTION_ADDRESS,
                           bink_frame_expected,
                           sizeof(bink_frame_expected),
