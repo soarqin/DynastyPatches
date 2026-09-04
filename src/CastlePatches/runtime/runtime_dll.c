@@ -17,8 +17,8 @@
 
 #define ENCOUNTER_FEEDBACK_MESSAGE (WM_APP + 0x3A1u)
 #define ENCOUNTER_FEEDBACK_TIMER_ID 0x3A1u
+#define SHUTDOWN_WATCHDOG_TIMEOUT_MS 10000u
 #define HOOK_ADDRESS(function) ((LPVOID)(uintptr_t)(function))
-#define VIDEO_STATE_ADDRESS ((uintptr_t)0x0046F390u)
 
 typedef BOOL (WINAPI *GetCursorPosFn)(LPPOINT);
 typedef BOOL (WINAPI *SetCursorPosFn)(int, int);
@@ -29,6 +29,7 @@ typedef void (__fastcall *PresentFn)(void *renderer);
 typedef void (__fastcall *TimerSetupFn)(void *timer, void *unused_edx);
 typedef void (__cdecl *GameLogicTickFn)(void);
 typedef void (__fastcall *UiCursorDrawFn)(void *input_manager);
+typedef void (__fastcall *VideoCloseFn)(void *video, void *unused_edx);
 
 void SurfaceFormatHook(void);
 void RendererWidthHook(void);
@@ -93,6 +94,7 @@ static volatile LONG g_cursor_map_active;
 static volatile LONG g_map_frame_misses;
 static volatile LONG g_bink_frame;
 volatile LONG g_runtime_shutting_down;
+static volatile LONG g_shutdown_watchdog_armed;
 
 static void ResizeGameWindow(HWND window);
 static void UpdateCursorLock(HWND window, bool active);
@@ -155,6 +157,28 @@ static HWND ReadGameWindow(void) {
 
 static bool IsRuntimeShuttingDown(void) {
     return InterlockedCompareExchange(&g_runtime_shutting_down, 0, 0) != 0;
+}
+
+static void CloseGameVideo(void) {
+    void *video = *(void **)(uintptr_t)VIDEO_STATE_ADDRESS;
+    if (video != NULL) ((VideoCloseFn)VIDEO_CLOSE_FUNCTION_ADDRESS)(video, NULL);
+}
+
+static DWORD WINAPI ShutdownWatchdog(void *parameter) {
+    (void)parameter;
+    Sleep(SHUTDOWN_WATCHDOG_TIMEOUT_MS);
+    TerminateProcess(GetCurrentProcess(), 0);
+    return 0;
+}
+
+static void ArmShutdownWatchdog(void) {
+    if (InterlockedCompareExchange(&g_shutdown_watchdog_armed, 1, 0) != 0) return;
+    HANDLE thread = CreateThread(NULL, 0, ShutdownWatchdog, NULL, 0, NULL);
+    if (thread == NULL) {
+        InterlockedExchange(&g_shutdown_watchdog_armed, 0);
+        return;
+    }
+    CloseHandle(thread);
 }
 
 static LONG WINAPI RuntimeUnhandledExceptionFilter(EXCEPTION_POINTERS *exception) {
@@ -326,6 +350,13 @@ static HWND WINAPI RuntimeCreateWindowExA(DWORD ex_style, LPCSTR class_name, LPC
 }
 
 static bool InstallCreateWindowHook(void) {
+    static const uint8_t video_close_expected[] = {0x56, 0x8B, 0xF1, 0x8B, 0x46, 0x04, 0x85, 0xC0};
+    if (memcmp((const void *)VIDEO_CLOSE_FUNCTION_ADDRESS,
+               video_close_expected,
+               sizeof(video_close_expected)) != 0) {
+        SetLastError(ERROR_REVISION_MISMATCH);
+        return false;
+    }
     return MH_CreateHookApi(L"user32.dll", "CreateWindowExA", HOOK_ADDRESS(RuntimeCreateWindowExA),
                             (LPVOID *)&g_original_create_window_ex_a) == MH_OK &&
            MH_EnableHook(MH_ALL_HOOKS) == MH_OK;
@@ -1039,6 +1070,10 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
     bool active = message == WM_ACTIVATEAPP ? w_param != FALSE :
                   message == WM_ACTIVATE ? LOWORD(w_param) != WA_INACTIVE :
                   message == WM_KILLFOCUS ? false : true;
+    if (message == WM_CLOSE || message == WM_DESTROY) {
+        CloseGameVideo();
+        ArmShutdownWatchdog();
+    }
     if (message == WM_CLOSE || message == WM_DESTROY || message == WM_NCDESTROY) {
         InterlockedExchange(&g_runtime_shutting_down, 1);
     }
