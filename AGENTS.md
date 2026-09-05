@@ -28,8 +28,7 @@ Keep each game's launcher and injected runtime under its own directory below `sr
 - Keep version-specific game addresses in the game's address table and validate every expected byte pattern before writing or installing a hook.
 - Use MinHook for function hooks and imported API hooks (`MH_CreateHook` / `MH_CreateHookApi`); do not locate or overwrite game IAT slots by fixed address.
 - Let MinHook create and relocate trampolines. Do not hand-write trampoline allocation, jump displacement, or runtime-generated machine-code buffers.
-- Put injected x86 instruction blocks in standalone MASM/NASM sources compiled by `ml` or `nasm`; do not assemble instruction bytes in C.
-- If an x86 block must be emitted by an x64 launcher and cannot be built as an assembly object, format the byte sequence by instruction and annotate every instruction in the source.
+- Put injected x86 instruction blocks in standalone NASM sources; do not assemble instruction bytes in C. The runtime DLL links its NASM object directly; the launcher's remote loader stub is assembled at build time with `nasm -f bin` and embedded as a generated C array, so launchers of either bitness share the same code path.
 - Preserve diagnostic information when investigating crashes. Do not hide a crash by reverting a patch without identifying its cause.
 
 ## Dependencies

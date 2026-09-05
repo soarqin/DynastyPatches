@@ -32,7 +32,7 @@ cmake --build build --config Release
 - `CastlePatches.exe`：Castle 补丁启动器。
 - `CastleRuntime.dll`：目标游戏进程内的 32 位运行时模块；启用窗口模式、结算倍率或动态遇敌率时使用。
 
-Visual Studio 构建使用 `ml.exe` 编译 runtime 的 x86 汇编；使用其他 CMake 工具链时需要提供 `nasm`。
+所有工具链都使用 [NASM](https://www.nasm.us/) 编译 runtime 的 x86 汇编和启动器内嵌的加载 stub；可通过 `winget install nasm` 或 `scoop install nasm` 安装。
 
 也可以构建 64 位启动器：
 
