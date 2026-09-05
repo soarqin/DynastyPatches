@@ -1,0 +1,35 @@
+name: Build CastlePatches (MinGW)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-mingw:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (MINGW32)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            mingw-w64-i686-gcc
+            mingw-w64-i686-cmake
+            mingw-w64-i686-ninja
+            nasm
+
+      - name: Configure MinGW build
+        shell: msys2 {0}
+        run: cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build MinGW
+        shell: msys2 {0}
+        run: cmake --build build-mingw --parallel
