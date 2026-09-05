@@ -8,14 +8,11 @@ project(CastleRuntime VERSION ${CASTLEPATCHES_VERSION} LANGUAGES C)
 
 include(Dependencies)
 
-if(MSVC)
-    enable_language(ASM_MASM)
-    set(CASTLE_RUNTIME_ASM runtime_hooks_masm.asm)
-else()
-    set(CMAKE_ASM_NASM_OBJECT_FORMAT win32)
-    enable_language(ASM_NASM)
-    set(CASTLE_RUNTIME_ASM runtime_hooks_nasm.asm)
-endif()
+# NASM is the single assembler for every toolchain: its win32 COFF output links
+# with both MSVC link.exe and GNU ld.
+set(CMAKE_ASM_NASM_OBJECT_FORMAT win32)
+enable_language(ASM_NASM)
+set(CASTLE_RUNTIME_ASM runtime_hooks.asm)
 
 set(CASTLEPATCHES_FILE_TYPE VFT_DLL)
 set(CASTLEPATCHES_FILE_DESCRIPTION "Castle Patches Runtime")

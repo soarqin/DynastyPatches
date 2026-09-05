@@ -25,6 +25,8 @@ extern _g_money_multiplier
 extern _g_runtime_shutting_down
 extern _PrepareFrameTimer
 extern _ShouldRunGameLogic
+extern _g_original_timer_setup
+extern _g_original_game_logic_tick
 
 global _SurfaceFormatHook
 global _RendererWidthHook
@@ -42,8 +44,8 @@ global _MoneyGainHook
 global _MoneyDisplayHook
 global _EncounterInitialHook
 global _EncounterRegenerationHook
-extern _g_original_timer_setup
-extern _g_original_game_logic_tick
+global _FramePacingTimerSetupHook
+global _GameLogicTickHook
 
 section .text
 

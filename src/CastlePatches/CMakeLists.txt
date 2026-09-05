@@ -7,6 +7,14 @@ set(CASTLEPATCHES_INTERNAL_NAME "CastlePatches")
 set(CASTLEPATCHES_ORIGINAL_FILENAME "CastlePatches.exe")
 configure_file(CastlePatchesVersion.rc.in CastlePatchesVersion.rc @ONLY)
 
+# NASM assembles both the runtime hooks and the embedded loader stub.
+find_program(NASM_EXECUTABLE NAMES nasm)
+if(NOT NASM_EXECUTABLE)
+    message(FATAL_ERROR
+        "NASM is required for all toolchains. "
+        "Install it with 'winget install nasm', 'scoop install nasm' or 'choco install nasm'.")
+endif()
+
 add_executable(CastlePatches WIN32
     main.c
     CastlePatches.rc
@@ -34,19 +42,16 @@ else()
         "-DCMAKE_C_FLAGS=-m32"
         "-DCMAKE_SHARED_LINKER_FLAGS=-m32"
     )
-    if(CMAKE_ASM_NASM_COMPILER)
-        list(APPEND RUNTIME_CONFIGURE_COMMAND
-            "-DCMAKE_ASM_NASM_COMPILER:FILEPATH=${CMAKE_ASM_NASM_COMPILER}"
-        )
-    endif()
 endif()
+list(APPEND RUNTIME_CONFIGURE_COMMAND
+    "-DCMAKE_ASM_NASM_COMPILER:FILEPATH=${NASM_EXECUTABLE}"
+)
 add_custom_command(
     OUTPUT "${RUNTIME_X86_DLL}"
     COMMAND ${RUNTIME_CONFIGURE_COMMAND}
     COMMAND "${CMAKE_COMMAND}" --build "${RUNTIME_X86_BINARY_DIR}" --config "$<CONFIG>" --parallel
     DEPENDS runtime/runtime_dll.c
-            runtime/runtime_hooks_masm.asm
-            runtime/runtime_hooks_nasm.asm
+            runtime/runtime_hooks.asm
             runtime/runtime_hook_addresses.inc
             runtime/CastleRuntime.def
             runtime/CMakeLists.txt
