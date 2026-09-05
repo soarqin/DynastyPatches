@@ -15,10 +15,36 @@ if(NOT NASM_EXECUTABLE)
         "Install it with 'winget install nasm', 'scoop install nasm' or 'choco install nasm'.")
 endif()
 
+# The remote loader stub is 32-bit x86 code for the game process. Assemble it
+# to a flat binary and embed it as a generated C array so the launcher works
+# identically for Win32 and x64 builds.
+set(LOADER_STUB_DIR "${CMAKE_CURRENT_BINARY_DIR}/loader_stub")
+set(LOADER_STUB_BIN "${LOADER_STUB_DIR}/runtime_loader_stub.bin")
+set(LOADER_STUB_C "${LOADER_STUB_DIR}/runtime_loader_stub_blob.c")
+set(LOADER_STUB_H "${LOADER_STUB_DIR}/runtime_loader_stub_blob.h")
+add_custom_command(
+    OUTPUT "${LOADER_STUB_C}" "${LOADER_STUB_H}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${LOADER_STUB_DIR}"
+    COMMAND "${NASM_EXECUTABLE}" -f bin
+            "-i${CMAKE_CURRENT_SOURCE_DIR}/"
+            -o "${LOADER_STUB_BIN}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/runtime_loader_stub.asm"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT_FILE=${LOADER_STUB_BIN}"
+            "-DOUTPUT_C=${LOADER_STUB_C}"
+            "-DOUTPUT_H=${LOADER_STUB_H}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/BinToC.cmake"
+    DEPENDS runtime_loader_stub.asm
+            runtime_loader_stub.inc
+            "${CMAKE_SOURCE_DIR}/cmake/BinToC.cmake"
+    VERBATIM
+)
+
 add_executable(CastlePatches WIN32
     main.c
     CastlePatches.rc
     "${CMAKE_CURRENT_BINARY_DIR}/CastlePatchesVersion.rc"
+    "${LOADER_STUB_C}"
 )
 
 # RPG.exe is a 32-bit process. Build the injected runtime DLL with a separate
@@ -73,6 +99,8 @@ target_compile_definitions(CastlePatches PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
 )
+
+target_include_directories(CastlePatches PRIVATE "${LOADER_STUB_DIR}")
 
 if(MSVC)
     target_compile_options(CastlePatches PRIVATE /W4 /permissive-)
