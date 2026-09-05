@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <wchar.h>
+#include "runtime_loader_stub_blob.h"
 
 #ifndef _countof
 #define _countof(array) (sizeof(array) / sizeof((array)[0]))
@@ -37,12 +38,6 @@ enum {
     ID_DYNAMIC_ENCOUNTER_RATE,
     ID_LAUNCH,
     ID_STATUS,
-};
-
-enum {
-    GET_MODULE_HANDLE_IAT_ADDRESS = 0x004600C8u,
-    GET_PROC_ADDRESS_IAT_ADDRESS = 0x00460090u,
-    REMOTE_HOOK_CAPACITY = 0x1000,
 };
 
 
@@ -388,86 +383,6 @@ static bool ApplyPatchGroup(HANDLE process, const PatchGroup *group) {
     return true;
 }
 
-static bool g_emit_overflow;
-
-static size_t EmitByte(uint8_t *buffer, size_t offset, uint8_t value) {
-    if (offset >= REMOTE_HOOK_CAPACITY) {
-        g_emit_overflow = true;
-        return REMOTE_HOOK_CAPACITY;
-    }
-    buffer[offset] = value;
-    return offset + 1;
-}
-
-static size_t EmitDword(uint8_t *buffer, size_t offset, uint32_t value) {
-    if (offset > REMOTE_HOOK_CAPACITY - sizeof(value)) {
-        g_emit_overflow = true;
-        return REMOTE_HOOK_CAPACITY;
-    }
-    memcpy(buffer + offset, &value, sizeof(value));
-    return offset + sizeof(value);
-}
-
-static void PatchNearJump(uint8_t *buffer, size_t displacement_offset, size_t target_offset) {
-    /* The emitter reserves the five-byte E9 form.  Use EB when the final
-       distance fits in int8, and turn the unused tail into NOPs.  Otherwise
-       retain the long form and validate that the displacement is representable
-       instead of silently truncating it. */
-    size_t instruction_offset = displacement_offset - 1u;
-    int64_t short_displacement = (int64_t)target_offset - (int64_t)(instruction_offset + 2u);
-    if (short_displacement >= INT8_MIN && short_displacement <= INT8_MAX) {
-        buffer[instruction_offset] = 0xEB;
-        buffer[instruction_offset + 1u] = (uint8_t)(int8_t)short_displacement;
-        for (size_t index = instruction_offset + 2u; index < displacement_offset + 4u; ++index) {
-            buffer[index] = 0x90;
-        }
-        return;
-    }
-
-    int64_t displacement = (int64_t)target_offset - (int64_t)(displacement_offset + 4u);
-    if (displacement < INT32_MIN || displacement > INT32_MAX) {
-        /* All labels in this trampoline must share one allocation.  Leave a
-           deterministic trap rather than emitting a wrapped jump if that
-           invariant is ever violated. */
-        buffer[instruction_offset] = 0xCC;
-        return;
-    }
-    buffer[instruction_offset] = 0xE9;
-    memcpy(buffer + displacement_offset, &(int32_t){(int32_t)displacement}, sizeof(int32_t));
-}
-
-static void PatchConditionalJump(uint8_t *buffer,
-                                  size_t displacement_offset,
-                                  size_t target_offset,
-                                  uint8_t short_opcode,
-                                  uint8_t long_opcode) {
-    /* The emitter reserves the six-byte 0F xx form.  Shrinking to a short
-       Jcc is safe because the remaining bytes are unreachable NOPs. */
-    size_t instruction_offset = displacement_offset - 2u;
-    int64_t short_displacement = (int64_t)target_offset - (int64_t)(instruction_offset + 2u);
-    if (short_displacement >= INT8_MIN && short_displacement <= INT8_MAX) {
-        buffer[instruction_offset] = short_opcode;
-        buffer[instruction_offset + 1u] = (uint8_t)(int8_t)short_displacement;
-        for (size_t index = instruction_offset + 2u; index < displacement_offset + 4u; ++index) {
-            buffer[index] = 0x90;
-        }
-        return;
-    }
-
-    int64_t displacement = (int64_t)target_offset - (int64_t)(displacement_offset + 4u);
-    if (displacement < INT32_MIN || displacement > INT32_MAX) {
-        buffer[instruction_offset] = 0xCC;
-        return;
-    }
-    buffer[instruction_offset] = 0x0F;
-    buffer[instruction_offset + 1u] = long_opcode;
-    memcpy(buffer + displacement_offset, &(int32_t){(int32_t)displacement}, sizeof(int32_t));
-}
-
-static void EmitPushImm(uint8_t *buffer, size_t *offset, uint32_t value) {
-    *offset = EmitByte(buffer, *offset, 0x68);
-    *offset = EmitDword(buffer, *offset, value);
-}
 
 static bool GetLauncherDirectory(wchar_t *path, size_t capacity) {
     DWORD length = GetModuleFileNameW(NULL, path, (DWORD)capacity);
@@ -478,6 +393,8 @@ static bool GetLauncherDirectory(wchar_t *path, size_t capacity) {
     return true;
 }
 
+/* Keep these offsets in sync with the STUB_* constants in
+   runtime_loader_stub.inc; the stub reads its strings from this layout. */
 enum {
     RUNTIME_STUB_PATH_OFFSET = 0x00,
     RUNTIME_STUB_KERNEL_NAME_OFFSET = 0x220,
@@ -486,165 +403,6 @@ enum {
     RUNTIME_STUB_DATA_SIZE = 0x300,
 };
 
-static size_t BuildRuntimeLoaderStub(uint8_t *buffer,
-                                     uint32_t remote_address,
-                                     uint32_t data_address) {
-    g_emit_overflow = false;
-    size_t offset = 0;
-    size_t loop_offset = 0;
-    size_t jump_no_kernel;
-    size_t jump_no_loader;
-    size_t jump_retry;
-    size_t retry_exhausted_offset;
-
-    offset = EmitByte(buffer, offset, 0x55); /* push ebp */
-    offset = EmitByte(buffer, offset, 0x8B); offset = EmitByte(buffer, offset, 0xEC);
-    /* ESI is used as the bounded retry counter.  A remote thread entry is
-       still a normal WINAPI callee, so preserve this nonvolatile register
-       across both the success and exhaustion returns. */
-    offset = EmitByte(buffer, offset, 0x56); /* push esi */
-    /* The loader is a standalone remote thread, so ESI is available as a
-       bounded retry counter.  Keeping the retry finite lets the caller
-       reclaim the temporary code/data allocations even if the target exits
-       or its imports never become usable. */
-    offset = EmitByte(buffer, offset, 0xBE); /* mov esi, 400 */
-    offset = EmitDword(buffer, offset, 400u);
-    loop_offset = offset;
-
-    /* The target's import slots can still be zero/FFFF while its suspended
-       loader is finishing.  Check the slot before calling it; jumping through
-       FFFFFFFF here was the original low-probability startup crash. */
-    offset = EmitByte(buffer, offset, 0xA1);
-    offset = EmitDword(buffer, offset, GET_MODULE_HANDLE_IAT_ADDRESS);
-    offset = EmitByte(buffer, offset, 0x83);
-    offset = EmitByte(buffer, offset, 0xF8);
-    offset = EmitByte(buffer, offset, 0xFF);
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84);
-    jump_no_kernel = offset; offset += 4u;
-    offset = EmitByte(buffer, offset, 0x85);
-    offset = EmitByte(buffer, offset, 0xC0);
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_zero_kernel = offset; offset += 4u;
-    EmitPushImm(buffer, &offset, data_address + RUNTIME_STUB_KERNEL_NAME_OFFSET);
-    offset = EmitByte(buffer, offset, 0xFF);
-    offset = EmitByte(buffer, offset, 0xD0);
-    offset = EmitByte(buffer, offset, 0x85); offset = EmitByte(buffer, offset, 0xC0);
-    offset = EmitByte(buffer, offset, 0x0F); offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_no_module = offset; offset += 4u;
-
-    /* Resolve GetProcAddress before pushing its arguments so every retry path
-       leaves the stack balanced. */
-    offset = EmitByte(buffer, offset, 0x89); offset = EmitByte(buffer, offset, 0xC2); /* mov edx,eax */
-    offset = EmitByte(buffer, offset, 0xA1);
-    offset = EmitDword(buffer, offset, GET_PROC_ADDRESS_IAT_ADDRESS);
-    offset = EmitByte(buffer, offset, 0x83);
-    offset = EmitByte(buffer, offset, 0xF8);
-    offset = EmitByte(buffer, offset, 0xFF);
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84);
-    jump_no_loader = offset; offset += 4u;
-    offset = EmitByte(buffer, offset, 0x85);
-    offset = EmitByte(buffer, offset, 0xC0);
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_zero_loader = offset; offset += 4u;
-    EmitPushImm(buffer, &offset, data_address + RUNTIME_STUB_LOAD_NAME_OFFSET);
-    offset = EmitByte(buffer, offset, 0x52); /* push kernel32 */
-    offset = EmitByte(buffer, offset, 0xFF);
-    offset = EmitByte(buffer, offset, 0xD0);
-    offset = EmitByte(buffer, offset, 0x85); offset = EmitByte(buffer, offset, 0xC0);
-    offset = EmitByte(buffer, offset, 0x0F); offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_no_load_library = offset; offset += 4u;
-
-    EmitPushImm(buffer, &offset, data_address + RUNTIME_STUB_PATH_OFFSET);
-    offset = EmitByte(buffer, offset, 0xFF); offset = EmitByte(buffer, offset, 0xD0); /* call LoadLibraryW */
-    offset = EmitByte(buffer, offset, 0x85); offset = EmitByte(buffer, offset, 0xC0);
-    offset = EmitByte(buffer, offset, 0x0F); offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_no_runtime_module = offset; offset += 4u;
-    /* Resolve and call CastleRuntimeStart after LoadLibrary has returned. */
-    offset = EmitByte(buffer, offset, 0x89); offset = EmitByte(buffer, offset, 0xC2); /* mov edx,eax */
-    /* Resolve GetProcAddress again after LoadLibraryW returned. */
-    offset = EmitByte(buffer, offset, 0xA1);
-    offset = EmitDword(buffer, offset, GET_PROC_ADDRESS_IAT_ADDRESS);
-    offset = EmitByte(buffer, offset, 0x83);
-    offset = EmitByte(buffer, offset, 0xF8);
-    offset = EmitByte(buffer, offset, 0xFF);
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_no_loader_start = offset; offset += 4u;
-    offset = EmitByte(buffer, offset, 0x85);
-    offset = EmitByte(buffer, offset, 0xC0);
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84);
-    size_t jump_zero_loader_start = offset; offset += 4u;
-    EmitPushImm(buffer, &offset, data_address + RUNTIME_STUB_START_NAME_OFFSET);
-    offset = EmitByte(buffer, offset, 0x52); /* push module handle */
-    offset = EmitByte(buffer, offset, 0xFF);
-    offset = EmitByte(buffer, offset, 0xD0);
-    offset = EmitByte(buffer, offset, 0x85); offset = EmitByte(buffer, offset, 0xC0);
-    /* If the export is missing, skip only the indirect call.  The previous
-       displacement (04h) also skipped `pop ebp`, so the thread returned by
-       popping the saved frame pointer as its return address. */
-    offset = EmitByte(buffer, offset, 0x74); offset = EmitByte(buffer, offset, 0x02);
-    offset = EmitByte(buffer, offset, 0xFF); offset = EmitByte(buffer, offset, 0xD0);
-    offset = EmitByte(buffer, offset, 0x5E); /* pop esi */
-    offset = EmitByte(buffer, offset, 0x5D); /* pop ebp */
-    /* CreateRemoteThread invokes an LPTHREAD_START_ROUTINE (WINAPI/stdcall),
-       so discard its single lpParameter argument on return. */
-    offset = EmitByte(buffer, offset, 0xC2);
-    offset = EmitByte(buffer, offset, 0x04);
-    offset = EmitByte(buffer, offset, 0x00); /* ret 4 */
-
-    size_t retry_offset = offset;
-    /* Never call Sleep through the target IAT here.  This thread can run
-       while the process is still completing loader initialization, and an
-       unresolved IAT slot is exactly the low-probability crash we are
-       avoiding.  A PAUSE-backed bounded spin is self-contained. */
-    offset = EmitByte(buffer, offset, 0x4E); /* dec esi */
-    offset = EmitByte(buffer, offset, 0x0F);
-    offset = EmitByte(buffer, offset, 0x84); /* jz exhausted */
-    size_t jump_exhausted = offset; offset += 4u;
-    offset = EmitByte(buffer, offset, 0xF3); /* pause */
-    offset = EmitByte(buffer, offset, 0x90);
-    offset = EmitByte(buffer, offset, 0xB9); /* mov ecx, 0x00010000 */
-    offset = EmitDword(buffer, offset, 0x00010000u);
-    size_t delay_inner_offset = offset;
-    offset = EmitByte(buffer, offset, 0xF3);
-    offset = EmitByte(buffer, offset, 0x90);
-    offset = EmitByte(buffer, offset, 0x49); /* dec ecx */
-    offset = EmitByte(buffer, offset, 0x75); /* jnz delay_inner */
-    int32_t delay_inner_displacement = (int32_t)delay_inner_offset -
-                                       (int32_t)(offset + 1u);
-    offset = EmitByte(buffer, offset, (uint8_t)(int8_t)delay_inner_displacement);
-    offset = EmitByte(buffer, offset, 0xE9);
-    jump_retry = offset; offset += 4u;
-
-    retry_exhausted_offset = offset;
-    offset = EmitByte(buffer, offset, 0x31); offset = EmitByte(buffer, offset, 0xC0); /* xor eax,eax */
-    offset = EmitByte(buffer, offset, 0x5E); /* pop esi */
-    offset = EmitByte(buffer, offset, 0x5D); /* pop ebp */
-    offset = EmitByte(buffer, offset, 0xC2);
-    offset = EmitByte(buffer, offset, 0x04);
-    offset = EmitByte(buffer, offset, 0x00); /* ret 4 */
-
-    PatchConditionalJump(buffer, jump_no_kernel, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_zero_kernel, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_no_module, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_no_loader, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_zero_loader, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_no_load_library, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_no_runtime_module, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_no_loader_start, retry_offset, 0x74, 0x84);
-    PatchConditionalJump(buffer, jump_zero_loader_start, retry_offset, 0x74, 0x84);
-    /* This branch uses the same six-byte 0F 84 form as the other retry
-       guards; keep it with the generic conditional-jump patching path. */
-    PatchConditionalJump(buffer, jump_exhausted, retry_exhausted_offset, 0x74, 0x84);
-    PatchNearJump(buffer, jump_retry, loop_offset);
-    (void)remote_address;
-    return g_emit_overflow ? 0 : offset;
-}
 
 static bool InjectRuntimeDll(HANDLE process) {
     wchar_t launcher_dir[MAX_PATH];
@@ -670,7 +428,7 @@ static bool InjectRuntimeDll(HANDLE process) {
                                         PAGE_READWRITE);
     LPVOID remote_code = VirtualAllocEx(process,
                                         NULL,
-                                        REMOTE_HOOK_CAPACITY,
+                                        kRuntimeLoaderStubSize,
                                         MEM_RESERVE | MEM_COMMIT,
                                         PAGE_READWRITE);
     if (remote_data == NULL || remote_code == NULL ||
@@ -681,7 +439,6 @@ static bool InjectRuntimeDll(HANDLE process) {
         return false;
     }
 
-    uint32_t data_address = (uint32_t)(uintptr_t)remote_data;
     uint32_t code_address = (uint32_t)(uintptr_t)remote_code;
     uint8_t data[RUNTIME_STUB_DATA_SIZE] = {0};
     size_t path_bytes = (wcslen(dll_path) + 1u) * sizeof(wchar_t);
@@ -703,32 +460,30 @@ static bool InjectRuntimeDll(HANDLE process) {
         return false;
     }
 
-    uint8_t code[REMOTE_HOOK_CAPACITY] = {0};
-    size_t code_size = BuildRuntimeLoaderStub(code, code_address, data_address);
-    if (code_size == 0 ||
-        !WriteProcessMemory(process, remote_code, code, code_size, &written) || written != code_size) {
+    if (!WriteProcessMemory(process, remote_code, kRuntimeLoaderStub, kRuntimeLoaderStubSize, &written) ||
+        written != kRuntimeLoaderStubSize) {
         VirtualFreeEx(process, remote_data, 0, MEM_RELEASE);
         VirtualFreeEx(process, remote_code, 0, MEM_RELEASE);
-        if (code_size == 0) SetLastError(ERROR_BUFFER_OVERFLOW);
         return false;
     }
     DWORD old_protection = 0;
     if (!VirtualProtectEx(process,
                           remote_code,
-                          REMOTE_HOOK_CAPACITY,
+                          kRuntimeLoaderStubSize,
                           PAGE_EXECUTE_READ,
                           &old_protection)) {
         VirtualFreeEx(process, remote_data, 0, MEM_RELEASE);
         VirtualFreeEx(process, remote_code, 0, MEM_RELEASE);
         return false;
     }
-    FlushInstructionCache(process, remote_code, code_size);
+    FlushInstructionCache(process, remote_code, kRuntimeLoaderStubSize);
 
+    /* Pass the data block as lpParameter; the stub reads it from [ebp+8]. */
     HANDLE thread = CreateRemoteThread(process,
                                        NULL,
                                        0,
                                        (LPTHREAD_START_ROUTINE)(uintptr_t)code_address,
-                                       NULL,
+                                       remote_data,
                                        0,
                                        NULL);
     if (thread == NULL) {

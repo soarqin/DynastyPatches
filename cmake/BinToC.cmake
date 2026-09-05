@@ -12,8 +12,20 @@ if(blob_size EQUAL 0)
     message(FATAL_ERROR "BinToC.cmake: ${INPUT_FILE} is empty.")
 endif()
 
-string(REGEX REPLACE "(..)" "0x\\1," blob_bytes "${blob_hex}")
-string(REGEX REPLACE "((0x..,){12})" "\\1\n    " blob_bytes "${blob_bytes}")
+# Wrap into rows of 12 bytes for readability (CMake regex has no {n} quantifier).
+set(blob_rows "")
+set(byte_index 0)
+while(byte_index LESS blob_size)
+    math(EXPR row_last "${byte_index} + 12")
+    set(row "")
+    while(byte_index LESS blob_size AND byte_index LESS row_last)
+        math(EXPR hex_index "${byte_index} * 2")
+        string(SUBSTRING "${blob_hex}" ${hex_index} 2 byte_hex)
+        string(APPEND row "0x${byte_hex},")
+        math(EXPR byte_index "${byte_index} + 1")
+    endwhile()
+    string(APPEND blob_rows "    ${row}\n")
+endwhile()
 
 get_filename_component(header_name "${OUTPUT_H}" NAME)
 file(WRITE "${OUTPUT_C}"
@@ -21,8 +33,7 @@ file(WRITE "${OUTPUT_C}"
 #include \"${header_name}\"
 
 const unsigned char kRuntimeLoaderStub[] = {
-    ${blob_bytes}
-};
+${blob_rows}};
 
 const unsigned int kRuntimeLoaderStubSize = ${blob_size}u;
 ")

@@ -37,6 +37,7 @@ add_custom_command(
     DEPENDS runtime_loader_stub.asm
             runtime_loader_stub.inc
             "${CMAKE_SOURCE_DIR}/cmake/BinToC.cmake"
+    BYPRODUCTS "${LOADER_STUB_BIN}"
     VERBATIM
 )
 
