@@ -5,4 +5,9 @@ include(CustomCompilerOptions)
 
 project(DynastyPatches)
 
+option(BUILD_TESTING "Build and register tests" OFF)
+if(BUILD_TESTING)
+    enable_testing()
+endif()
+
 add_subdirectory(src)

@@ -1,10 +1,11 @@
 # Dynasty Patches
 
-Dynasty Patches 是一组面向汉堂经典游戏的补丁工具。当前已包含《天地劫序传 幽城幻剑录》(Castle: The Forbidden Divines) 的 `CastlePatches`，用于选择补丁并启动游戏，不会修改原始游戏文件。
+Dynasty Patches 是一组面向汉堂经典游戏的补丁工具。当前包含《天地劫序传 幽城幻剑录》(Castle: The Forbidden Divines) 的 `CastlePatches`，以及《天地劫 神魔至尊传》的 `SwordmanPatches`。两个工具都只修改新建游戏进程的内存，不会修改原始游戏文件。
 
 ## 项目结构
 
 - `src/CastlePatches/`：Castle 补丁工具及其运行时模块。
+- `src/SwordmanPatches/`：Swordman 补丁工具及其运行时模块；当前只支持 `Sm_win2.exe` 的已校验版本。
 - `analysis/`：逆向分析过程中整理的函数、调用关系和验证记录。
 - `tools/`：IDA Pro 9.4 / idalib 辅助脚本。
 - `ANALYSIS.md`：Castle 补丁位点和功能对应关系。
@@ -32,6 +33,11 @@ cmake --build build --config Release
 - `CastlePatches.exe`：Castle 补丁启动器。
 - `CastleRuntime.dll`：目标游戏进程内的 32 位运行时模块；启用窗口模式、结算倍率或动态遇敌率时使用。
 
+使用同一构建目录时，Swordman 文件位于 `src/SwordmanPatches/Release/`（或对应配置目录）：
+
+- `SwordmanPatches.exe`：Swordman 补丁启动器。
+- `SwordmanRuntime.dll`：目标游戏进程内的 32 位运行时模块。
+
 所有 x86 汇编（runtime hook 和启动器内嵌的加载 stub）统一使用 [NASM](https://www.nasm.us/) 编译，可通过 `winget install nasm` 或 `scoop install nasm` 安装。仅支持 Visual Studio（MSVC）工具链；GNU/MinGW 构建不受支持（UCRT64 等 64 位工具链无法编译 32 位 runtime，MSYS2 的 32 位环境正在淘汰）。
 
 也可以构建 64 位启动器：
@@ -52,6 +58,12 @@ CastlePatches 的版本由 `cmake/CastlePatchesVersion.cmake` 统一管理，并
 ## 使用说明
 
 将 `CastlePatches.exe` 与 `CastleRuntime.dll` 放在同一目录，启动后选择需要的补丁并点击启动按钮。程序会优先查找当前目录下的 `RPG.exe`、`exe/RPG.exe` 和 `Castle/exe/RPG.exe`；均未找到时提供文件选择。
+
+将 `SwordmanPatches.exe` 与 `SwordmanRuntime.dll` 放在同一目录，选择 SHA-256 为 `2ad46144eaca95b92a7d28ad946687df09fb0c3155cf3ccafa8381fba53afbb2` 的 `Sm_win2.exe` 后点击启动。启动器会先校验完整文件，再创建挂起进程并注入运行时；不匹配的 `Swordman.exe`、`Sm_win1.exe` 和其他修改版会被拒绝。
+
+Swordman 选项还包括「移动后可施法」和「恢复召唤兽复制物品特性」。前者放宽移动后的施法条件，后者保留召唤兽复制物品时的源物品记录；两个选项默认关闭。
+
+「随时中途存档」默认关闭。启用后，在我方回合中，角色行动后仍可通过原有系统菜单保存 `GAMEDATA.GCF`；读取中途存档时保留角色的行动状态和移动力，后续正常回合仍恢复行动力。读取这类存档时也需启用该选项。位点和验证说明见 [Swordman 中途存档分析](src/SwordmanPatches/SAVE_ANALYSIS.md)。
 
 启动器只修改新建游戏进程的内存，不会写回磁盘上的原始 `RPG.exe`。窗口模式下可选择窗口倍率，并启用鼠标锁定。启用「动态调整遇敌率」后，可在游戏中使用以下组合键调整随机遇敌：
 

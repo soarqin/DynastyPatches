@@ -1,1 +1,2 @@
 add_subdirectory(CastlePatches)
+add_subdirectory(SwordmanPatches)

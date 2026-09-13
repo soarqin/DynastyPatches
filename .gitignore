@@ -44,3 +44,4 @@ cursor_diagnostics.txt
 *.bak
 /analysis/
 /tools/
+/exe/
