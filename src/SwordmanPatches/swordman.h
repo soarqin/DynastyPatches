@@ -28,6 +28,7 @@ enum {
 typedef struct {
     uint32_t flags;
     uint32_t growth;
+    uint32_t scale2; /* Half-units: 2 = 1x, 3 = 1.5x, ... 6 = 3x. */
 } SwordmanOptions;
 
 #endif

@@ -33,6 +33,7 @@ enum {
     ID_SMOOTH,
     ID_CLEANUP,
     ID_SOFTWARE_MOVIE,
+    ID_SCALE,
     ID_LAUNCH,
     ID_STATUS,
 };
@@ -43,14 +44,18 @@ enum {
     STUB_LOAD = 0x220,
     STUB_START = 0x240,
     STUB_OPTIONS = 0x260,
-    STUB_GETMODULE = 0x268,
-    STUB_GETPROC = 0x26c,
+    STUB_GETMODULE = 0x26c,
+    STUB_GETPROC = 0x270,
     STUB_DATA_SIZE = 0x280,
 };
+
+_Static_assert(STUB_OPTIONS + sizeof(SwordmanOptions) <= STUB_GETMODULE,
+               "Loader options must not overlap API pointers");
 
 static HINSTANCE g_instance;
 static HWND g_window;
 static HWND g_status;
+static HWND g_scale_combo;
 static HFONT g_font;
 
 static const wchar_t kConfigFileName[] = L"SwordmanPatches.ini";
@@ -120,6 +125,13 @@ static uint32_t LoadConfigGrowth(void) {
                : SWORDMAN_GROWTH_NORMAL;
 }
 
+static uint32_t LoadConfigScale(void) {
+    wchar_t config_path[MAX_PATH];
+    if (!ConfigPath(config_path, _countof(config_path))) return 2;
+    uint32_t value = GetPrivateProfileIntW(L"Display", L"Scale2", 2, config_path);
+    return value >= 2 && value <= 6 ? value : 2;
+}
+
 static void SaveOptions(const SwordmanOptions *options) {
     wchar_t config_path[MAX_PATH];
     if (!ConfigPath(config_path, _countof(config_path))) return;
@@ -152,6 +164,10 @@ static void SaveOptions(const SwordmanOptions *options) {
     wchar_t growth[16];
     _snwprintf_s(growth, _countof(growth), _TRUNCATE, L"%lu", (unsigned long)options->growth);
     WritePrivateProfileStringW(L"Patches", L"Growth", growth, config_path);
+
+    wchar_t scale[16];
+    _snwprintf_s(scale, _countof(scale), _TRUNCATE, L"%lu", (unsigned long)options->scale2);
+    WritePrivateProfileStringW(L"Display", L"Scale2", scale, config_path);
 }
 
 static bool ReadWholeFile(const wchar_t *path, uint8_t **data, size_t *size) {
@@ -358,7 +374,7 @@ static bool IsChecked(int control_id) {
 }
 
 static SwordmanOptions ReadOptions(void) {
-    SwordmanOptions options = {0, SWORDMAN_GROWTH_NORMAL};
+    SwordmanOptions options = {0, SWORDMAN_GROWTH_NORMAL, 2};
     const int ids[] = {
         ID_NO_CD, ID_SPEED, ID_CHESTS, ID_ATTRIBUTES, ID_CAST_AFTER_MOVE,
         ID_SUMMON_ITEM_COPY, ID_SAVE_ANYTIME, ID_RESIZABLE, ID_MOVIE,
@@ -375,6 +391,8 @@ static SwordmanOptions ReadOptions(void) {
     }
     if (IsChecked(ID_GROWTH_MAX)) options.growth = SWORDMAN_GROWTH_MAXIMUM;
     if (IsChecked(ID_GROWTH_MIN)) options.growth = SWORDMAN_GROWTH_MINIMUM;
+    int scale_index = (int)SendMessageW(g_scale_combo, CB_GETCURSEL, 0, 0);
+    if (scale_index >= 0 && scale_index < 5) options.scale2 = (uint32_t)scale_index + 2;
     return options;
 }
 
@@ -456,6 +474,15 @@ static void CreateControls(HWND window) {
     AddControl(window, L"BUTTON", L"平滑电影画面", BS_AUTOCHECKBOX, 360, 96, 220, 24, ID_SMOOTH);
     AddControl(window, L"BUTTON", L"电影播放清理", BS_AUTOCHECKBOX, 360, 122, 220, 24, ID_CLEANUP);
     AddControl(window, L"BUTTON", L"软件电影解码", BS_AUTOCHECKBOX, 360, 148, 220, 24, ID_SOFTWARE_MOVIE);
+    AddControl(window, L"STATIC", L"初始窗口分辨率", SS_LEFT, 360, 184, 220, 22, -1);
+    g_scale_combo = AddControl(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
+                               360, 210, 220, 140, ID_SCALE);
+    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1×（640 × 400）");
+    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1.5×（960 × 600）");
+    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"2×（1280 × 800）");
+    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"2.5×（1600 × 1000）");
+    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"3×（1920 × 1200）");
+    SendMessageW(g_scale_combo, CB_SETCURSEL, (WPARAM)(LoadConfigScale() - 2), 0);
     AddControl(window, L"STATIC",
                L"启动时创建已挂起的进程，仅向该进程内存写入补丁。",
                SS_LEFT, 18, 330, 552, 22, -1);

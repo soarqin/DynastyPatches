@@ -96,3 +96,8 @@ else()
     target_compile_options(SwordmanPatches PRIVATE -Wall -Wextra -Wpedantic)
     target_link_options(SwordmanPatches PRIVATE -municode)
 endif()
+set_target_properties(SwordmanPatches PROPERTIES
+    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
+    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)

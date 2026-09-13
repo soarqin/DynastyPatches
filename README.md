@@ -28,12 +28,10 @@ cmake -S . -B build -G "Visual Studio 18 2026" -A Win32
 cmake --build build --config Release
 ```
 
-输出文件位于 `build/Release/`：
+输出文件位于 `build/bin/Release/`（或对应配置目录）：
 
 - `CastlePatches.exe`：Castle 补丁启动器。
 - `CastleRuntime.dll`：目标游戏进程内的 32 位运行时模块；启用窗口模式、结算倍率或动态遇敌率时使用。
-
-使用同一构建目录时，Swordman 文件位于 `src/SwordmanPatches/Release/`（或对应配置目录）：
 
 - `SwordmanPatches.exe`：Swordman 补丁启动器。
 - `SwordmanRuntime.dll`：目标游戏进程内的 32 位运行时模块。
@@ -60,6 +58,8 @@ CastlePatches 的版本由 `cmake/CastlePatchesVersion.cmake` 统一管理，并
 将 `CastlePatches.exe` 与 `CastleRuntime.dll` 放在同一目录，启动后选择需要的补丁并点击启动按钮。程序会优先查找当前目录下的 `RPG.exe`、`exe/RPG.exe` 和 `Castle/exe/RPG.exe`；均未找到时提供文件选择。
 
 将 `SwordmanPatches.exe` 与 `SwordmanRuntime.dll` 放在同一目录，选择 SHA-256 为 `2ad46144eaca95b92a7d28ad946687df09fb0c3155cf3ccafa8381fba53afbb2` 的 `Sm_win2.exe` 后点击启动。启动器会先校验完整文件，再创建挂起进程并注入运行时；不匹配的 `Swordman.exe`、`Sm_win1.exe` 和其他修改版会被拒绝。
+
+「初始窗口分辨率」提供 `1x（640 × 400）`、`1.5x（960 × 600）`、`2x（1280 × 800）`、`2.5x（1600 × 1000）` 和 `3x（1920 × 1200）`，默认 `1x`。尺寸指客户区，仅在窗口创建时应用，画面由游戏自带功能缩放。该选项独立于「窗口模式」，保存在 `SwordmanPatches.ini` 的 `[Display] Scale2` 中，值 `2` 至 `6` 对应五档倍率；缺失或无效值按 `1x` 处理。
 
 Swordman 选项还包括「移动后可施法」和「恢复召唤兽复制物品特性」。前者放宽移动后的施法条件，后者保留召唤兽复制物品时的源物品记录；两个选项默认关闭。
 

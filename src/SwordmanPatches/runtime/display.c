@@ -44,6 +44,8 @@ static BinkBufferSetScaleFn g_buffer_scale;
 static WNDPROC g_original_window_proc;
 static CreateWindowExAFn g_original_create_window;
 static StretchDIBitsFn g_original_stretch_dibits;
+static uint32_t g_scale2 = 2;
+static bool g_resizable;
 static uint32_t g_first_movie_mode;
 static bool g_software_movie;
 static bool g_extended_bink_layout;
@@ -192,11 +194,19 @@ static LRESULT CALLBACK MovieWindowProc(HWND window, UINT message, WPARAM w_para
     return result;
 }
 
-static HWND WINAPI ResizableCreateWindow(DWORD ex_style, LPCSTR class_name, LPCSTR title,
-                                         DWORD style, int x, int y, int width, int height,
-                                         HWND parent, HMENU menu, HINSTANCE instance, LPVOID parameter) {
+static HWND WINAPI GameCreateWindow(DWORD ex_style, LPCSTR class_name, LPCSTR title,
+                                    DWORD style, int x, int y, int width, int height,
+                                    HWND parent, HMENU menu, HINSTANCE instance, LPVOID parameter) {
     if ((uintptr_t)_ReturnAddress() == SWORDMAN_CREATE_WINDOW_RETURN_ADDRESS && style == 0x10C00000u) {
-        style = 0x10CF0000u;
+        if (g_resizable) style = 0x10CF0000u;
+        RECT rect = {0, 0, (LONG)(640u * g_scale2 / 2u), (LONG)(400u * g_scale2 / 2u)};
+        if (!AdjustWindowRectEx(&rect, style, menu != NULL, ex_style)) return NULL;
+        int outer_width = rect.right - rect.left;
+        int outer_height = rect.bottom - rect.top;
+        x += (width - outer_width) / 2;
+        y += (height - outer_height) / 2;
+        width = outer_width;
+        height = outer_height;
     }
     return g_original_create_window(ex_style, class_name, title, style, x, y, width, height,
                                      parent, menu, instance, parameter);
@@ -252,7 +262,8 @@ void __cdecl SwordmanCleanupVideo(void *movie) {
     }
 }
 
-static bool ValidateDisplaySites(uint32_t flags, bool extended_bink_layout) {
+static bool ValidateDisplaySites(const SwordmanOptions *options, bool extended_bink_layout) {
+    uint32_t flags = options->flags;
     static const uint8_t window_style[] = {0x68, 0x00, 0x00, 0xC0, 0x10};
     static const uint8_t window_call[] = {0xFF, 0x15, 0x5C, 0xB1, 0x45, 0x00};
     static const uint8_t stretch_call[] = {0xFF, 0x15, 0x10, 0xB0, 0x45, 0x00};
@@ -264,7 +275,7 @@ static bool ValidateDisplaySites(uint32_t flags, bool extended_bink_layout) {
     };
     if ((flags & SWORDMAN_NO_CD) != 0 &&
         !ValidateGameBytes(SWORDMAN_NO_CD_HOOK_ADDRESS, kNoCdExpected, sizeof(kNoCdExpected))) return false;
-    if ((flags & SWORDMAN_RESIZABLE) != 0 &&
+    if (((flags & SWORDMAN_RESIZABLE) != 0 || options->scale2 != 2) &&
         (!ValidateGameBytes(SWORDMAN_CREATE_WINDOW_STYLE_ADDRESS, window_style, sizeof(window_style)) ||
          !ValidateGameBytes(SWORDMAN_CREATE_WINDOW_CALL_ADDRESS, window_call, sizeof(window_call)))) return false;
     if ((flags & SWORDMAN_SMOOTH) != 0 &&
@@ -289,11 +300,14 @@ static bool ValidateDisplaySites(uint32_t flags, bool extended_bink_layout) {
 
 bool CreateDisplayHooks(const SwordmanOptions *options) {
     if (options == NULL || (options->flags & ~(uint32_t)SWORDMAN_ALL_FLAGS) != 0 ||
+        options->scale2 < 2 || options->scale2 > 6 ||
         ((options->flags & SWORDMAN_SOFTWARE_MOVIE) != 0 && (options->flags & SWORDMAN_MOVIE) == 0)) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return false;
     }
     uint32_t flags = options->flags;
+    g_scale2 = options->scale2;
+    g_resizable = (flags & SWORDMAN_RESIZABLE) != 0;
     g_extended_bink_layout = false;
 
     if ((flags & (SWORDMAN_MOVIE | SWORDMAN_MOVIE_CLEANUP)) != 0) {
@@ -318,7 +332,7 @@ bool CreateDisplayHooks(const SwordmanOptions *options) {
             }
         }
     }
-    if (!ValidateDisplaySites(flags, g_extended_bink_layout)) return false;
+    if (!ValidateDisplaySites(options, g_extended_bink_layout)) return false;
 
     if ((flags & SWORDMAN_MOVIE) != 0) {
         g_software_movie = (flags & SWORDMAN_SOFTWARE_MOVIE) != 0;
@@ -349,8 +363,8 @@ bool CreateDisplayHooks(const SwordmanOptions *options) {
     if ((flags & SWORDMAN_NO_CD) != 0 &&
         !CreateGameHook(SWORDMAN_NO_CD_HOOK_ADDRESS, kNoCdExpected, sizeof(kNoCdExpected),
                         HOOK_ADDRESS(NoCdCheck), NULL)) return false;
-    if ((flags & SWORDMAN_RESIZABLE) != 0 &&
-        !CreateApiHook(L"user32.dll", "CreateWindowExA", HOOK_ADDRESS(ResizableCreateWindow),
+    if ((g_resizable || g_scale2 != 2) &&
+        !CreateApiHook(L"user32.dll", "CreateWindowExA", HOOK_ADDRESS(GameCreateWindow),
                        (LPVOID *)&g_original_create_window)) return false;
     if ((flags & SWORDMAN_SMOOTH) != 0 &&
         !CreateApiHook(L"gdi32.dll", "StretchDIBits", HOOK_ADDRESS(SmoothStretchDIBits),

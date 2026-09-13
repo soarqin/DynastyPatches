@@ -59,6 +59,7 @@ bool CreateGameHook(uintptr_t address, const uint8_t *expected, size_t length,
 DWORD WINAPI SwordmanRuntimeStart(const SwordmanOptions *options) {
     if (options == NULL || (options->flags & ~(uint32_t)SWORDMAN_ALL_FLAGS) != 0 ||
         options->growth > SWORDMAN_GROWTH_MINIMUM ||
+        options->scale2 < 2 || options->scale2 > 6 ||
         ((options->flags & SWORDMAN_SOFTWARE_MOVIE) && !(options->flags & SWORDMAN_MOVIE))) {
         return ERROR_INVALID_PARAMETER;
     }
