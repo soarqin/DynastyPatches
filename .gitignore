@@ -45,3 +45,9 @@ cursor_diagnostics.txt
 /analysis/
 /tools/
 /exe/
+
+# LLM folders
+/.pi*/
+/.opencode/
+/.claude/
+/.codex/
