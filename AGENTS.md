@@ -15,7 +15,7 @@ Keep each game's launcher and injected runtime under its own directory below `sr
 
 ## Reverse engineering
 
-- Use IDA Pro 9.4 idat or idalib for executable analysis.
+- Use IDA Pro 9.4 through Python `idapro` or `ida-domain` for executable analysis. Do not run `idat`.
 - On Windows: Search IDA Pro through registry installation entry.
 - Preserve analysis evidence under `analysis/` and helper scripts under `tools/`.
 - Do not replace IDA-based analysis with `llvm-objdump` or similar low-fidelity tools.

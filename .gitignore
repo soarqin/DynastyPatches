@@ -42,8 +42,11 @@ cursor_diagnostics.txt
 *.tmp
 *.log
 *.bak
-/analysis/
-/tools/
+/analysis/*
+!/analysis/castle_widescreen_backdrop.md
+/tools/*
+!/tools/ida_castle_widescreen_backdrop.py
+!/tools/benchmark_castle_backdrop.c
 /exe/
 
 # LLM folders

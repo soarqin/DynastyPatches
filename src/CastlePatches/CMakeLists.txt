@@ -78,6 +78,9 @@ add_custom_command(
     COMMAND ${RUNTIME_CONFIGURE_COMMAND}
     COMMAND "${CMAKE_COMMAND}" --build "${RUNTIME_X86_BINARY_DIR}" --config "$<CONFIG>" --parallel
     DEPENDS runtime/runtime_dll.c
+            runtime/widescreen_backdrop.c
+            runtime/widescreen_backdrop.h
+            castle_addresses.h
             runtime/runtime_hooks.asm
             runtime/runtime_hook_addresses.inc
             runtime/CastleRuntime.def
@@ -93,6 +96,21 @@ add_custom_command(TARGET CastlePatches POST_BUILD
             "$<TARGET_FILE_DIR:CastlePatches>/CastleRuntime.dll"
     VERBATIM
 )
+
+if(BUILD_TESTING AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    # The game renderer uses 32-bit pointers at fixed field offsets.
+    add_executable(CastleBackdropTest
+        tests/widescreen_backdrop_test.c
+        runtime/widescreen_backdrop.c
+    )
+    target_compile_definitions(CastleBackdropTest PRIVATE
+        WIN32_LEAN_AND_MEAN NOMINMAX
+    )
+    if(MSVC)
+        target_compile_options(CastleBackdropTest PRIVATE /W4 /permissive-)
+    endif()
+    add_test(NAME CastleBackdropTest COMMAND CastleBackdropTest)
+endif()
 
 target_compile_definitions(CastlePatches PRIVATE
     UNICODE

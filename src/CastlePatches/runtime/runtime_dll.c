@@ -5,6 +5,7 @@
 #include <MinHook.h>
 
 #include "../castle_addresses.h"
+#include "widescreen_backdrop.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,10 +31,15 @@ typedef void (__fastcall *TimerSetupFn)(void *timer, void *unused_edx);
 typedef void (__cdecl *GameLogicTickFn)(void);
 typedef void (__fastcall *UiCursorDrawFn)(void *input_manager);
 typedef void (__fastcall *VideoCloseFn)(void *video, void *unused_edx);
+typedef void (__fastcall *MapSceneReleaseFn)(void *scene);
+typedef uint16_t *(__cdecl *FrameCopyFn)(int32_t, int32_t, const uint16_t *,
+                                       int32_t, int32_t, int32_t, int32_t, uint16_t *,
+                                       int32_t, int32_t, int32_t, int32_t, int32_t, int32_t);
 
 void SurfaceFormatHook(void);
 void RendererWidthHook(void);
 void MapRenderHook(void);
+void MapBackdropCaptureHook(void);
 void MapUiSpriteHook(void);
 void DialogTextNameHook(void);
 void DialogTextBodyHook(void);
@@ -65,6 +71,7 @@ static HWND volatile g_window;
 void *g_original_surface_format;
 void *g_original_renderer_width;
 void *g_original_map_render;
+void *g_original_map_backdrop_capture;
 void *g_original_map_ui_sprite;
 void *g_original_dialog_name;
 void *g_original_dialog_body;
@@ -76,6 +83,8 @@ PresentFn g_original_present;
 TimerSetupFn g_original_timer_setup;
 GameLogicTickFn g_original_game_logic_tick;
 static UiCursorDrawFn g_original_ui_cursor_draw;
+static MapSceneReleaseFn g_original_map_scene_release;
+static FrameCopyFn g_original_frame_copy;
 static bool g_dynamic_encounter_rate;
 static bool g_windowed;
 static bool g_widescreen;
@@ -89,6 +98,8 @@ static volatile LONG g_encounter_rate_percent = 100;
 static volatile LONG g_title_restore_due;
 static volatile LONG g_window_proc_installed;
 static volatile LONG g_map_frame;
+static volatile LONG g_map_frame_suppressed;
+static volatile LONG g_frame_upload_prepared;
 static volatile LONG g_map_active;
 static volatile LONG g_cursor_map_active;
 static volatile LONG g_map_frame_misses;
@@ -469,57 +480,26 @@ void __cdecl ApplyWidescreenRendererWidth(void) {
     if (descriptor != 0) *(volatile uint32_t *)(descriptor + 0x04u) = WIDESCREEN_CLIENT_WIDTH;
 }
 
-void __cdecl MarkMapFrame(void) {
-    InterlockedExchange(&g_map_frame, 1);
+void __cdecl MarkMapFrame(uintptr_t scene) {
+    if (*(const uint8_t *)(scene + MAP_SCENE_RENDER_SUPPRESSED_OFFSET) == 0) {
+        InterlockedExchange(&g_map_frame, 1);
+    } else {
+        InterlockedExchange(&g_map_frame_suppressed, 1);
+    }
+}
+
+void __cdecl CaptureCurrentMapBackdrop(uintptr_t scene) {
+    CaptureMapBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, scene);
+}
+
+static void __fastcall RuntimeMapSceneRelease(void *scene, void *unused_edx) {
+    (void)unused_edx;
+    InvalidateMapBackdrop((uintptr_t)scene);
+    if (g_original_map_scene_release != NULL) g_original_map_scene_release(scene);
 }
 
 void __cdecl MarkBinkFrame(void) {
     InterlockedExchange(&g_bink_frame, 1);
-}
-
-static bool ComposeFixedFrame(uintptr_t renderer) {
-    LPDIRECTDRAWSURFACE4 back =
-        (LPDIRECTDRAWSURFACE4)*(volatile uintptr_t *)(renderer + 0x08u);
-    LPDIRECTDRAWSURFACE4 scratch =
-        (LPDIRECTDRAWSURFACE4)*(volatile uintptr_t *)(renderer + 0x14u);
-    if (back == NULL || scratch == NULL) return false;
-
-    /* Build the centered 4:3 frame off-screen so primary receives one Blt. */
-    RECT left_bar = {0, 0, (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2, WIDESCREEN_CLIENT_HEIGHT};
-    RECT right_bar = {left_bar.right + GAME_CLIENT_WIDTH, 0, WIDESCREEN_CLIENT_WIDTH, WIDESCREEN_CLIENT_HEIGHT};
-    RECT source = {0, 0, GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT};
-    RECT destination = {left_bar.right, 0, left_bar.right + GAME_CLIENT_WIDTH, GAME_CLIENT_HEIGHT};
-    DDBLTFX fill = {0};
-    fill.dwSize = sizeof(fill);
-
-    if (FAILED(IDirectDrawSurface4_Blt(scratch,
-                                       &source,
-                                       back,
-                                       &source,
-                                       DDBLT_WAIT,
-                                       NULL))) {
-        return false;
-    }
-    if (FAILED(IDirectDrawSurface4_Blt(back,
-                                       &destination,
-                                       scratch,
-                                       &source,
-                                       DDBLT_WAIT,
-                                       NULL))) {
-        return false;
-    }
-    return SUCCEEDED(IDirectDrawSurface4_Blt(back,
-                                             &left_bar,
-                                             NULL,
-                                             NULL,
-                                             DDBLT_WAIT | DDBLT_COLORFILL,
-                                             &fill)) &&
-           SUCCEEDED(IDirectDrawSurface4_Blt(back,
-                                             &right_bar,
-                                             NULL,
-                                             NULL,
-                                             DDBLT_WAIT | DDBLT_COLORFILL,
-                                             &fill));
 }
 
 static bool PresentBinkCentered(uintptr_t renderer) {
@@ -553,16 +533,14 @@ static bool PresentBinkCentered(uintptr_t renderer) {
                                               NULL));
 }
 
-static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
-    (void)unused_edx;
-    if (IsRuntimeShuttingDown()) return;
+static void PrepareWidescreenFrame(void) {
     bool map_frame = InterlockedExchange(&g_map_frame, 0) != 0;
-    bool bink_frame = InterlockedExchange(&g_bink_frame, 0) != 0;
+    bool map_suppressed = InterlockedExchange(&g_map_frame_suppressed, 0) != 0;
     if (map_frame) {
         InterlockedExchange(&g_map_frame_misses, 0);
         InterlockedExchange(&g_map_active, 1);
         InterlockedExchange(&g_cursor_map_active, 1);
-    } else if (g_frame_pacing && IsMapActive()) {
+    } else if (g_frame_pacing && IsMapActive() && !map_suppressed) {
         InterlockedExchange(&g_cursor_map_active, 0);
         if (InterlockedIncrement(&g_map_frame_misses) >= 3) {
             InterlockedExchange(&g_map_frame_misses, 0);
@@ -573,10 +551,44 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
         InterlockedExchange(&g_map_active, 0);
         InterlockedExchange(&g_cursor_map_active, 0);
     }
+}
+
+static uint16_t *__cdecl RuntimeFrameCopy(int32_t source_width, int32_t source_height,
+                                        const uint16_t *source, int32_t source_x, int32_t source_y,
+                                        int32_t destination_width, int32_t destination_height,
+                                        uint16_t *destination, int32_t destination_x, int32_t destination_y,
+                                        int32_t right, int32_t bottom, int32_t pitch, int32_t conversion) {
+    /* sub_406330 calls this once with its back surface already locked. Prepare
+       the scene state here; Present must not consume the same frame twice. */
+    if (InterlockedCompareExchange(&g_frame_upload_prepared, 1, 0) == 0) {
+        PrepareWidescreenFrame();
+    }
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    if (!IsMapActive() && InterlockedCompareExchange(&g_bink_frame, 0, 0) == 0 &&
+        renderer != 0 && conversion == 15 && destination_x == 0 && destination_y == 0 &&
+        right == WIDESCREEN_CLIENT_WIDTH - 1 && bottom == GAME_CLIENT_HEIGHT - 1 &&
+        (uintptr_t)source == *(const uintptr_t *)(renderer + RENDERER_PIXELS_OFFSET) &&
+        source_width == *(const int32_t *)(renderer + RENDERER_BUFFER_WIDTH_OFFSET) &&
+        source_height == *(const int32_t *)(renderer + RENDERER_BUFFER_HEIGHT_OFFSET) &&
+        source_x == *(const int32_t *)(renderer + RENDERER_BORDER_X_OFFSET) &&
+        source_y == *(const int32_t *)(renderer + RENDERER_BORDER_Y_OFFSET) &&
+        ComposeFixedFrame(renderer, destination, pitch)) {
+        return destination;
+    }
+    return g_original_frame_copy(source_width, source_height, source, source_x, source_y,
+                                 destination_width, destination_height, destination,
+                                 destination_x, destination_y, right, bottom, pitch, conversion);
+}
+
+static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
+    (void)unused_edx;
+    if (IsRuntimeShuttingDown()) return;
+    /* Bink can present without sub_406330; retain state updates for that path. */
+    if (InterlockedExchange(&g_frame_upload_prepared, 0) == 0) PrepareWidescreenFrame();
+    bool bink_frame = InterlockedExchange(&g_bink_frame, 0) != 0;
     if (bink_frame) {
         (void)PresentBinkCentered((uintptr_t)renderer);
     } else {
-        if (!IsMapActive()) (void)ComposeFixedFrame((uintptr_t)renderer);
         if (g_original_present != NULL) g_original_present(renderer);
     }
 }
@@ -600,8 +612,15 @@ static bool InstallWidescreenHooks(void) {
     static const uint8_t map_render_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x86, 0x19, 0x02, 0x00, 0x00, 0x84, 0xC0,
     };
+    static const uint8_t map_backdrop_capture_expected[] = {0xE8, 0x1E, 0xBD, 0xFF, 0xFF};
+    static const uint8_t map_scene_release_expected[] = {
+        0x56, 0x57, 0x8B, 0xF9, 0x8B, 0xB7, 0x80, 0x02, 0x00, 0x00,
+    };
     static const uint8_t present_expected[] = {
         0x83, 0xEC, 0x14, 0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x30,
+    };
+    static const uint8_t frame_copy_expected[] = {
+        0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x10, 0x53, 0x56, 0x57,
     };
     static const uint8_t bink_frame_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
@@ -633,9 +652,18 @@ static bool InstallWidescreenHooks(void) {
         memcmp((const void *)MAP_RENDER_HOOK_ADDRESS,
                map_render_expected,
                sizeof(map_render_expected)) != 0 ||
+        memcmp((const void *)MAP_BACKDROP_CAPTURE_HOOK_ADDRESS,
+               map_backdrop_capture_expected,
+               sizeof(map_backdrop_capture_expected)) != 0 ||
+        memcmp((const void *)MAP_SCENE_RELEASE_FUNCTION_ADDRESS,
+               map_scene_release_expected,
+               sizeof(map_scene_release_expected)) != 0 ||
         memcmp((const void *)PRESENT_FUNCTION_ADDRESS,
                present_expected,
                sizeof(present_expected)) != 0 ||
+        memcmp((const void *)FRAME_COPY_FUNCTION_ADDRESS,
+               frame_copy_expected,
+               sizeof(frame_copy_expected)) != 0 ||
         memcmp((const void *)MAP_UI_SPRITE_HOOK_ADDRESS,
                map_ui_sprite_expected,
                sizeof(map_ui_sprite_expected)) != 0 ||
@@ -689,11 +717,26 @@ static bool InstallWidescreenHooks(void) {
                           sizeof(map_render_expected),
                           HOOK_ADDRESS(MapRenderHook),
                           &g_original_map_render) ||
+         !InstallGameHook(MAP_BACKDROP_CAPTURE_HOOK_ADDRESS,
+                          map_backdrop_capture_expected,
+                          sizeof(map_backdrop_capture_expected),
+                          HOOK_ADDRESS(MapBackdropCaptureHook),
+                          &g_original_map_backdrop_capture) ||
+         !InstallGameHook(MAP_SCENE_RELEASE_FUNCTION_ADDRESS,
+                          map_scene_release_expected,
+                          sizeof(map_scene_release_expected),
+                          HOOK_ADDRESS(RuntimeMapSceneRelease),
+                          (LPVOID *)&g_original_map_scene_release) ||
          !InstallGameHook(PRESENT_FUNCTION_ADDRESS,
                           present_expected,
                           sizeof(present_expected),
                           HOOK_ADDRESS(RuntimePresent),
                           (LPVOID *)&g_original_present) ||
+         !InstallGameHook(FRAME_COPY_FUNCTION_ADDRESS,
+                          frame_copy_expected,
+                          sizeof(frame_copy_expected),
+                          HOOK_ADDRESS(RuntimeFrameCopy),
+                          (LPVOID *)&g_original_frame_copy) ||
          !InstallGameHook(MAP_UI_SPRITE_HOOK_ADDRESS,
                          map_ui_sprite_expected,
                          sizeof(map_ui_sprite_expected),

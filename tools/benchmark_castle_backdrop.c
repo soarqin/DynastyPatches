@@ -1,0 +1,175 @@
+/* DirectDraw upload benchmark; never starts RPG.exe or creates a game window.
+   Link this file and runtime/widescreen_backdrop.c with ddraw and dxguid. */
+#include <windows.h>
+#include <ddraw.h>
+
+#include "../src/CastlePatches/castle_addresses.h"
+#include "../src/CastlePatches/runtime/widescreen_backdrop.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+enum { SIDE = 112, SOURCE_WIDTH = 992, SOURCE_HEIGHT = 576, ITERATIONS = 24 };
+enum { UI_BYTES_PER_FRAME = 640 * 480 * (int)sizeof(uint16_t) };
+static uintptr_t g_renderer[32];
+static uint32_t g_mode[4] = {0, 864, 480, 16};
+static uint16_t g_source[SOURCE_HEIGHT][SOURCE_WIDTH];
+static uint16_t g_gray[480][224];
+static LPDIRECTDRAWSURFACE4 g_back, g_scratch, g_sink;
+static int64_t g_old_lock_ticks, g_old_copy_ticks, g_old_unlock_ticks;
+
+static void Check(HRESULT result, const char *action) {
+    if (FAILED(result)) {
+        fprintf(stderr, "%s: HRESULT=%08lX\n", action, (unsigned long)result);
+        exit(1);
+    }
+}
+
+static void OldCompose(void) {
+    DDSURFACEDESC2 descriptor = {0};
+    descriptor.dwSize = sizeof(descriptor);
+    LARGE_INTEGER begin, locked, copied, end;
+    QueryPerformanceCounter(&begin);
+    Check(IDirectDrawSurface4_Lock(g_back, NULL, &descriptor, DDLOCK_WAIT, NULL), "previous Lock");
+    QueryPerformanceCounter(&locked);
+    for (size_t y = 0; y < 480; ++y) {
+        uint16_t *row = (uint16_t *)((uint8_t *)descriptor.lpSurface + (ptrdiff_t)y * descriptor.lPitch);
+        memmove(row + SIDE, row, 640 * sizeof(uint16_t));
+        memcpy(row, g_gray[y], SIDE * sizeof(uint16_t));
+        memcpy(row + 752, g_gray[y] + SIDE, SIDE * sizeof(uint16_t));
+    }
+    QueryPerformanceCounter(&copied);
+    Check(IDirectDrawSurface4_Unlock(g_back, NULL), "previous Unlock");
+    QueryPerformanceCounter(&end);
+    g_old_lock_ticks += locked.QuadPart - begin.QuadPart;
+    g_old_copy_ticks += copied.QuadPart - locked.QuadPart;
+    g_old_unlock_ticks += end.QuadPart - copied.QuadPart;
+}
+
+static void VerifyUploadedFrame(int mode) {
+    DDSURFACEDESC2 descriptor = {0};
+    descriptor.dwSize = sizeof(descriptor);
+    Check(IDirectDrawSurface4_Lock(g_back, NULL, &descriptor, DDLOCK_WAIT, NULL), "verify Lock");
+    for (size_t y = 0; y < 480; ++y) {
+        const uint16_t *row = (const uint16_t *)((uint8_t *)descriptor.lpSurface +
+                                               (ptrdiff_t)y * descriptor.lPitch);
+        if (memcmp(row + SIDE, &g_source[y + 48][64], 640 * sizeof(uint16_t)) != 0 ||
+            memcmp(row, g_gray[y], SIDE * sizeof(uint16_t)) != 0 ||
+            memcmp(row + 752, g_gray[y] + SIDE, SIDE * sizeof(uint16_t)) != 0) {
+            fprintf(stderr, "mode %d produced different pixels\n", mode);
+            exit(3);
+        }
+    }
+    Check(IDirectDrawSurface4_Unlock(g_back, NULL), "verify Unlock");
+}
+
+static void Frame(int mode) {
+    /* Match sub_406330: scratch Blt, lock, upload, unlock, then present Blt. */
+    Check(IDirectDrawSurface4_Blt(g_back, NULL, g_scratch, NULL, DDBLT_WAIT, NULL), "clear Blt");
+    DDSURFACEDESC2 descriptor = {0};
+    descriptor.dwSize = sizeof(descriptor);
+    Check(IDirectDrawSurface4_Lock(g_back, NULL, &descriptor, DDLOCK_WAIT, NULL), "upload Lock");
+    if (mode == 2) {
+        if (!ComposeFixedFrame((uintptr_t)g_renderer, descriptor.lpSurface, descriptor.lPitch)) exit(2);
+    } else {
+        for (size_t y = 0; y < 480; ++y) {
+            uint8_t *row = (uint8_t *)descriptor.lpSurface + (ptrdiff_t)y * descriptor.lPitch;
+            memcpy(row, &g_source[y + 48][64], 864 * sizeof(uint16_t));
+        }
+    }
+    Check(IDirectDrawSurface4_Unlock(g_back, NULL), "upload Unlock");
+    if (mode == 1) OldCompose();
+    Check(IDirectDrawSurface4_Blt(g_sink, NULL, g_back, NULL, DDBLT_WAIT, NULL), "sink Blt");
+}
+
+static bool CreateSurface(LPDIRECTDRAW4 draw, DWORD memory, LPDIRECTDRAWSURFACE4 *surface) {
+    DDSURFACEDESC2 descriptor = {0};
+    descriptor.dwSize = sizeof(descriptor);
+    descriptor.dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_CAPS | DDSD_PIXELFORMAT;
+    descriptor.dwWidth = 864;
+    descriptor.dwHeight = 480;
+    descriptor.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN | memory;
+    descriptor.ddpfPixelFormat.dwSize = sizeof(DDPIXELFORMAT);
+    descriptor.ddpfPixelFormat.dwFlags = DDPF_RGB;
+    descriptor.ddpfPixelFormat.dwRGBBitCount = 16;
+    descriptor.ddpfPixelFormat.dwRBitMask = 0xF800;
+    descriptor.ddpfPixelFormat.dwGBitMask = 0x07E0;
+    descriptor.ddpfPixelFormat.dwBBitMask = 0x001F;
+    return SUCCEEDED(IDirectDraw4_CreateSurface(draw, &descriptor, surface, NULL));
+}
+
+int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    *(uintptr_t *)((uint8_t *)g_renderer + RENDERER_MODE_OFFSET) = (uintptr_t)g_mode;
+    *(uintptr_t *)((uint8_t *)g_renderer + RENDERER_PIXELS_OFFSET) = (uintptr_t)g_source;
+    *(uint32_t *)((uint8_t *)g_renderer + RENDERER_BUFFER_WIDTH_OFFSET) = SOURCE_WIDTH;
+    *(uint32_t *)((uint8_t *)g_renderer + RENDERER_BUFFER_HEIGHT_OFFSET) = SOURCE_HEIGHT;
+    *(uint32_t *)((uint8_t *)g_renderer + RENDERER_BORDER_X_OFFSET) = 64;
+    *(uint32_t *)((uint8_t *)g_renderer + RENDERER_BORDER_Y_OFFSET) = 48;
+    *(uint32_t *)((uint8_t *)g_renderer + RENDERER_PIXEL_BYTES_OFFSET) = 2;
+    *(uint32_t *)((uint8_t *)g_renderer + RENDERER_PIXEL_FORMAT_OFFSET) = 16;
+    for (size_t y = 0; y < SOURCE_HEIGHT; ++y) {
+        for (size_t x = 0; x < SOURCE_WIDTH; ++x) g_source[y][x] = (uint16_t)(x * 37u + y * 101u);
+    }
+    CaptureMapBackdrop((uintptr_t)g_renderer, 1);
+    uint16_t *reference = malloc(864 * 480 * sizeof(uint16_t));
+    if (reference == NULL || !ComposeFixedFrame((uintptr_t)g_renderer, reference, 864 * 2)) return 2;
+    for (size_t y = 0; y < 480; ++y) {
+        memcpy(g_gray[y], reference + y * 864, SIDE * sizeof(uint16_t));
+        memcpy(g_gray[y] + SIDE, reference + y * 864 + 752, SIDE * sizeof(uint16_t));
+    }
+    free(reference);
+
+    LPDIRECTDRAW original = NULL;
+    LPDIRECTDRAW4 draw = NULL;
+    Check(DirectDrawCreate(NULL, &original, NULL), "DirectDrawCreate");
+    Check(IDirectDraw_QueryInterface(original, &IID_IDirectDraw4, (void **)&draw), "QueryInterface");
+    IDirectDraw_Release(original);
+    Check(IDirectDraw4_SetCooperativeLevel(draw, GetDesktopWindow(), DDSCL_NORMAL), "SetCooperativeLevel");
+    DWORD requests[] = {0, DDSCAPS_SYSTEMMEMORY};
+    const char *names[] = {"default", "system"};
+    LARGE_INTEGER frequency;
+    QueryPerformanceFrequency(&frequency);
+    for (size_t memory = 0; memory < sizeof(requests) / sizeof(requests[0]); ++memory) {
+        if (!CreateSurface(draw, requests[memory], &g_back)) {
+            printf("%s surface unavailable\n", names[memory]);
+            continue;
+        }
+        if (!CreateSurface(draw, requests[memory], &g_scratch) ||
+            !CreateSurface(draw, requests[memory], &g_sink)) return 2;
+        DDBLTFX fill = {0};
+        fill.dwSize = sizeof(fill);
+        Check(IDirectDrawSurface4_Blt(g_scratch, NULL, NULL, NULL, DDBLT_WAIT | DDBLT_COLORFILL, &fill), "scratch fill");
+        for (int sample = 0; sample < 3; ++sample) {
+            for (int mode = 0; mode < 3; ++mode) {
+                for (int iteration = 0; iteration < 2; ++iteration) Frame(mode);
+                LARGE_INTEGER start, end;
+                g_old_lock_ticks = g_old_copy_ticks = g_old_unlock_ticks = 0;
+                QueryPerformanceCounter(&start);
+                for (int iteration = 0; iteration < ITERATIONS; ++iteration) Frame(mode);
+                QueryPerformanceCounter(&end);
+                double microseconds = (double)(end.QuadPart - start.QuadPart) * 1000000.0 /
+                    (double)frequency.QuadPart / ITERATIONS;
+                printf("%s sample=%d mode=%s frame_us=%.2f\n", names[memory], sample + 1,
+                       mode == 0 ? "upload_only" : mode == 1 ? "previous" : "merged", microseconds);
+                if (mode == 1) {
+                    double tick_us = 1000000.0 / (double)frequency.QuadPart / ITERATIONS;
+                    printf("  extra_lock_us=%.2f copy_us=%.2f extra_unlock_us=%.2f\n",
+                           g_old_lock_ticks * tick_us, g_old_copy_ticks * tick_us,
+                           g_old_unlock_ticks * tick_us);
+                }
+            }
+        }
+        Frame(1);
+        VerifyUploadedFrame(1);
+        Frame(2);
+        VerifyUploadedFrame(2);
+        printf("%s previous/merged pixels verified (center=%d bytes)\n", names[memory], UI_BYTES_PER_FRAME);
+        IDirectDrawSurface4_Release(g_sink);
+        IDirectDrawSurface4_Release(g_scratch);
+        IDirectDrawSurface4_Release(g_back);
+    }
+    IDirectDraw4_Release(draw);
+    return 0;
+}

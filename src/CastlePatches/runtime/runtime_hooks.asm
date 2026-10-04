@@ -5,6 +5,7 @@ BITS 32
 extern _ApplySurfaceFormat
 extern _ApplyWidescreenRendererWidth
 extern _MarkMapFrame
+extern _CaptureCurrentMapBackdrop
 extern _MarkBinkFrame
 extern _OffsetMapUiSpriteX
 extern _ApplyEncounterInitialRate
@@ -13,6 +14,7 @@ extern _ApplyEncounterThresholdRate
 extern _g_original_surface_format
 extern _g_original_renderer_width
 extern _g_original_map_render
+extern _g_original_map_backdrop_capture
 extern _g_original_map_ui_sprite
 extern _g_original_dialog_name
 extern _g_original_dialog_body
@@ -31,6 +33,7 @@ extern _g_original_game_logic_tick
 global _SurfaceFormatHook
 global _RendererWidthHook
 global _MapRenderHook
+global _MapBackdropCaptureHook
 global _MapUiSpriteHook
 global _DialogTextNameHook
 global _DialogTextBodyHook
@@ -66,9 +69,21 @@ _RendererWidthHook:
 
 _MapRenderHook:
     pushad
+    push ecx
     call _MarkMapFrame
+    add esp, 4
     popad
     jmp [_g_original_map_render]
+
+_MapBackdropCaptureHook:
+    pushfd
+    pushad
+    push esi
+    call _CaptureCurrentMapBackdrop
+    add esp, 4
+    popad
+    popfd
+    jmp [_g_original_map_backdrop_capture]
 
 _MapUiSpriteHook:
     pushad
