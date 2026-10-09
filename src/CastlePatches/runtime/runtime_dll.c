@@ -6,6 +6,7 @@
 
 #include "../castle_addresses.h"
 #include "widescreen_backdrop.h"
+#include "widescreen_transition.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -85,6 +86,32 @@ GameLogicTickFn g_original_game_logic_tick;
 static UiCursorDrawFn g_original_ui_cursor_draw;
 static MapSceneReleaseFn g_original_map_scene_release;
 static FrameCopyFn g_original_frame_copy;
+typedef int (__cdecl *MapEffectFn)(void);
+typedef uint8_t (__cdecl *FadeFn)(int16_t, int16_t);
+typedef uintptr_t (__cdecl *CommandFactoryFn)(const void *);
+typedef int (__fastcall *MapLoadFn)(void *, void *, const char *);
+typedef int (__fastcall *MapResumeFn)(void *);
+typedef void (__fastcall *MenuReleaseFn)(void *);
+typedef uint8_t (__fastcall *UiObjectDrawFn)(void *);
+typedef int (__fastcall *UiSpriteBlitFn)(void *, void *, uintptr_t, int32_t, int32_t,
+                                       int32_t, int32_t, int32_t, int32_t);
+typedef uint8_t (__fastcall *SaveLoadFn)(void *, void *, const char *);
+static MapEffectFn g_original_map_effect;
+static FadeFn g_original_fade_out;
+static FadeFn g_original_fade_in;
+static CommandFactoryFn g_original_command_factory;
+static MapLoadFn g_original_map_load;
+static MapResumeFn g_original_map_suspend;
+static MapResumeFn g_original_map_resume;
+static MenuReleaseFn g_original_menu_release;
+static MenuReleaseFn g_original_system_menu_release;
+static UiObjectDrawFn g_original_ui_object_draw;
+static UiSpriteBlitFn g_original_ui_sprite_blit;
+static uintptr_t g_suppressed_ui_sprite;
+static SaveLoadFn g_original_save_load;
+static CastleTransition g_transition;
+static uint32_t g_factory_opcode = UINT32_MAX;
+static CastleFrameLayout g_frame_layout;
 static bool g_dynamic_encounter_rate;
 static bool g_windowed;
 static bool g_widescreen;
@@ -102,7 +129,6 @@ static volatile LONG g_map_frame_suppressed;
 static volatile LONG g_frame_upload_prepared;
 static volatile LONG g_map_active;
 static volatile LONG g_cursor_map_active;
-static volatile LONG g_map_frame_misses;
 static volatile LONG g_bink_frame;
 volatile LONG g_runtime_shutting_down;
 static volatile LONG g_shutdown_watchdog_armed;
@@ -489,13 +515,224 @@ void __cdecl MarkMapFrame(uintptr_t scene) {
 }
 
 void __cdecl CaptureCurrentMapBackdrop(uintptr_t scene) {
-    CaptureMapBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, scene);
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    CaptureMapBackdrop(renderer, scene);
 }
 
 static void __fastcall RuntimeMapSceneRelease(void *scene, void *unused_edx) {
     (void)unused_edx;
     InvalidateMapBackdrop((uintptr_t)scene);
+    if (g_transition.scene == (uintptr_t)scene) {
+        CancelFixedTransition(&g_transition);
+        SetBackdropTransitionColor(0);
+    }
     if (g_original_map_scene_release != NULL) g_original_map_scene_release(scene);
+}
+
+static void CancelMapTransition(void) {
+    CancelFixedTransition(&g_transition);
+    ResetMapBackdrop();
+}
+
+static uint32_t CurrentScriptOpcode(void) {
+    if (g_factory_opcode != UINT32_MAX) return g_factory_opcode;
+    uintptr_t command = *(const uintptr_t *)CURRENT_SCRIPT_COMMAND_ADDRESS;
+    if (command == 0) return UINT32_MAX;
+    uintptr_t record = *(const uintptr_t *)(command + SCRIPT_COMMAND_RECORD_OFFSET);
+    return record != 0 ? *(const uint32_t *)record : UINT32_MAX;
+}
+
+static uint32_t FixedUiAfterCurrentFade(void) {
+    uintptr_t script = *(const uintptr_t *)SCRIPT_BUFFER_ADDRESS;
+    MEMORY_BASIC_INFORMATION region;
+    if (script == 0 || VirtualQuery((const void *)script, &region, sizeof(region)) == 0 ||
+        region.State != MEM_COMMIT || (region.Protect & (PAGE_NOACCESS | PAGE_GUARD)) != 0) return 0;
+    uintptr_t region_start = (uintptr_t)region.BaseAddress;
+    if (region.RegionSize > UINTPTR_MAX - region_start || script < region_start) return 0;
+    size_t size = region.RegionSize - (size_t)(script - region_start);
+    return FindFixedUiAfterFade((const uint8_t *)script, size,
+                               *(const uint32_t *)SCRIPT_COMMAND_TABLE_ADDRESS,
+                               *(const uint32_t *)SCRIPT_COMMAND_COUNT_ADDRESS,
+                               *(const uint32_t *)SCRIPT_COMMAND_INDEX_ADDRESS);
+}
+
+static uintptr_t __cdecl RuntimeCommandFactory(const void *record) {
+    uint32_t opcode = *(const uint32_t *)record;
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    if (IsFixedUiCommand(opcode)) {
+        BeginFixedTransition(&g_transition, scene, opcode);
+        SetBackdropTransitionColor(0);
+    }
+    if (opcode == 0x37u) {
+        CancelFixedTransition(&g_transition);
+        SetBackdropTransitionColor(0);
+    }
+    /* A map load/new game or video is a different destination even if an earlier
+       UI return is still fading. Cancel before its first draw or script wait. */
+    if (opcode == 0x3Au || opcode == 0x3Bu || opcode == 0x3Cu ||
+        opcode == 0x8Du || opcode == 0x98u) {
+        CancelMapTransition();
+    }
+    uint32_t previous = g_factory_opcode;
+    g_factory_opcode = opcode;
+    uintptr_t command = g_original_command_factory(record);
+    g_factory_opcode = previous;
+    return command;
+}
+
+static uint8_t __cdecl RuntimeFadeOut(int16_t step, int16_t delay) {
+    uint32_t opcode = CurrentScriptOpcode();
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    uint32_t target = IsFixedUiCommand(opcode) ? opcode :
+        (opcode == 0x53u || opcode == 0x5Au) ? FixedUiAfterCurrentFade() : 0;
+    if (target != 0) {
+        BeginFixedTransition(&g_transition, scene, target);
+    } else {
+        CancelFixedTransition(&g_transition);
+        SetBackdropTransitionColor(0);
+    }
+    return g_original_fade_out(step, delay);
+}
+
+static uint8_t __cdecl RuntimeFadeIn(int16_t step, int16_t delay) {
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    if (scene != 0 && g_transition.scene == scene &&
+        HasTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, scene) &&
+        *(const uint8_t *)(scene + MAP_SCENE_RENDER_SUPPRESSED_OFFSET) == 0) {
+        ReturnFromFixedTransition(&g_transition, scene);
+    }
+    return g_original_fade_in(step, delay);
+}
+
+static int __cdecl RuntimeMapEffect(void) {
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    if (g_transition.phase == CASTLE_TRANSITION_NONE || g_transition.scene != scene) {
+        return g_original_map_effect();
+    }
+    g_transition.awaiting_map_frame = false;
+    int state = *(const int32_t *)MAP_EFFECT_STATE_ADDRESS;
+    if (state != 1 && (*(const uint16_t *)MAP_EFFECT_COLOR_ADDRESS != 1u ||
+        *(const int16_t *)MAP_EFFECT_FADE_OUT_TARGET_ADDRESS != 0 ||
+        *(const int16_t *)MAP_EFFECT_FADE_IN_TARGET_ADDRESS != CASTLE_TRANSITION_COLOR)) {
+        return g_original_map_effect();
+    }
+    int color = MapTransitionColor(&g_transition, scene, state,
+                                   *(const int16_t *)MAP_EFFECT_BRIGHTNESS_ADDRESS, GetTickCount());
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    if (color >= 0) {
+        /* This menu leaves the map in the draw queue. Its transparent center
+           must use the same crop that meets the two unshifted side strips. */
+        if (*(const uintptr_t *)ORDINARY_MENU_OBJECT_ADDRESS != 0 &&
+            DrawTransitionBackdrop(renderer, color)) return 0;
+        if (ApplyMapTransition(renderer, color)) return 0;
+    }
+    return g_original_map_effect();
+}
+
+static int __fastcall RuntimeMapLoad(void *scene, void *unused_edx, const char *path) {
+    (void)unused_edx;
+    CancelMapTransition();
+    return g_original_map_load(scene, NULL, path);
+}
+
+static int __fastcall RuntimeMapResume(void *scene, void *unused_edx) {
+    (void)unused_edx;
+    int result = g_original_map_resume(scene);
+    ReturnFromFixedTransition(&g_transition, (uintptr_t)scene);
+    return result;
+}
+
+static int __fastcall RuntimeMapSuspend(void *scene, void *unused_edx) {
+    (void)unused_edx;
+    int result = g_original_map_suspend(scene);
+    /* Native menu/shop fades finish on a wide map. Crop the held gray frame
+       before the fixed UI first draws, so its center meets the cached sides. */
+    if (!IsFixedUiCommand(CurrentScriptOpcode())) {
+        /* Random encounters suspend the map without creating a script command. */
+        CancelFixedTransition(&g_transition);
+        SetBackdropTransitionColor(0);
+    } else if (g_transition.scene == (uintptr_t)scene && g_transition.phase == CASTLE_TRANSITION_FIXED) {
+        (void)DrawTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, 0);
+    } else {
+        if (g_transition.phase == CASTLE_TRANSITION_RETURNING) {
+            /* Random encounters can suspend a map midway through a menu return. */
+            CancelFixedTransition(&g_transition);
+        }
+        SetBackdropTransitionColor(0);
+    }
+    return result;
+}
+
+static void __fastcall RuntimeMenuRelease(void *menu, void *unused_edx) {
+    (void)unused_edx;
+    g_original_menu_release(menu);
+    if (g_transition.target == 0x36u) {
+        ReturnFromFixedTransition(&g_transition, *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS);
+        if (g_transition.awaiting_map_frame) {
+            (void)DrawTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, g_transition.color);
+        }
+    }
+}
+
+static bool IsGraySystemMenuReturn(uintptr_t menu, uintptr_t renderer, uintptr_t scene) {
+    if (menu == 0 || scene == 0 || g_transition.scene != scene || g_transition.target != 0x35u ||
+        g_transition.phase == CASTLE_TRANSITION_NONE || !HasTransitionBackdrop(renderer, scene)) return false;
+    int32_t phase = *(const int32_t *)(menu + SYSTEM_MENU_EXIT_PHASE_OFFSET);
+    uintptr_t state = *(const uintptr_t *)GAME_STATE_OBJECT_ADDRESS;
+    return phase >= 1 && phase <= 3 && state != 0 &&
+        *(const int32_t *)(state + GAME_STATE_MENU_EVENT_OFFSET) == 0 &&
+        *(const int32_t *)(state + GAME_STATE_MENU_LOAD_OFFSET) == 0 &&
+        *(const int32_t *)(state + GAME_STATE_MENU_TITLE_OFFSET) == 0;
+}
+
+static void __fastcall RuntimeSystemMenuRelease(void *menu, void *unused_edx) {
+    (void)unused_edx;
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    bool gray_return = IsGraySystemMenuReturn((uintptr_t)menu, renderer, scene);
+    g_original_system_menu_release(menu);
+    if (gray_return && g_transition.scene == scene && g_transition.phase != CASTLE_TRANSITION_NONE) {
+        /* Queue resume runs on the next tick. Keep the final gray background
+           while the native map is still suspended, then honor its fade-in. */
+        g_transition.awaiting_map_frame = true;
+        (void)DrawTransitionBackdrop(renderer, g_transition.color);
+    }
+}
+
+static uint8_t __fastcall RuntimeUiObjectDraw(void *object, void *unused_edx) {
+    (void)unused_edx;
+    uintptr_t ui = (uintptr_t)object;
+    uintptr_t menu = *(const uintptr_t *)SYSTEM_MENU_OBJECT_ADDRESS;
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    uintptr_t previous = g_suppressed_ui_sprite;
+    g_suppressed_ui_sprite = 0;
+    if (menu != 0 && ui == *(const uintptr_t *)(menu + SYSTEM_MENU_RETURN_MASK_OFFSET) &&
+        IsGraySystemMenuReturn(menu, renderer, scene) &&
+        *(const uint8_t *)(ui + UI_OBJECT_ENABLED_OFFSET) != 0 &&
+        *(const uint8_t *)(ui + UI_OBJECT_VISIBLE_OFFSET) != 0) {
+        /* Keep the menu background while its elements slide outward. Suppress
+           only FANIN pixels; switch to the gray map after menu destruction. */
+        g_suppressed_ui_sprite = *(const uintptr_t *)(ui + UI_OBJECT_SPRITE_OFFSET);
+    }
+    uint8_t result = g_original_ui_object_draw(object);
+    g_suppressed_ui_sprite = previous;
+    return result;
+}
+
+static int __fastcall RuntimeUiSpriteBlit(void *resource, void *unused_edx, uintptr_t destination,
+                                         int32_t x, int32_t y, int32_t mode,
+                                         int32_t a6, int32_t a7, int32_t a8) {
+    (void)unused_edx;
+    if (g_suppressed_ui_sprite != 0) return 0;
+    return g_original_ui_sprite_blit(resource, NULL, destination, x, y, mode, a6, a7, a8);
+}
+
+static uint8_t __fastcall RuntimeSaveLoad(void *state, void *unused_edx, const char *path) {
+    (void)unused_edx;
+    uint8_t result = g_original_save_load(state, NULL, path);
+    if (result != 0) CancelMapTransition();
+    return result;
 }
 
 void __cdecl MarkBinkFrame(void) {
@@ -536,21 +773,26 @@ static bool PresentBinkCentered(uintptr_t renderer) {
 static void PrepareWidescreenFrame(void) {
     bool map_frame = InterlockedExchange(&g_map_frame, 0) != 0;
     bool map_suppressed = InterlockedExchange(&g_map_frame_suppressed, 0) != 0;
-    if (map_frame) {
-        InterlockedExchange(&g_map_frame_misses, 0);
-        InterlockedExchange(&g_map_active, 1);
-        InterlockedExchange(&g_cursor_map_active, 1);
-    } else if (g_frame_pacing && IsMapActive() && !map_suppressed) {
-        InterlockedExchange(&g_cursor_map_active, 0);
-        if (InterlockedIncrement(&g_map_frame_misses) >= 3) {
-            InterlockedExchange(&g_map_frame_misses, 0);
-            InterlockedExchange(&g_map_active, 0);
-        }
-    } else {
-        InterlockedExchange(&g_map_frame_misses, 0);
-        InterlockedExchange(&g_map_active, 0);
-        InterlockedExchange(&g_cursor_map_active, 0);
+    uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
+    /* A suspended map can leave the draw queue entirely, so there may be no
+       MapRenderHook call to mark the first battle/menu frame as suppressed. */
+    if (scene != 0 && HasTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, scene) &&
+        *(const uint8_t *)(scene + MAP_SCENE_RENDER_SUPPRESSED_OFFSET) != 0) {
+        map_suppressed = true;
     }
+    bool ordinary_menu = *(const uintptr_t *)ORDINARY_MENU_OBJECT_ADDRESS != 0;
+    if (!map_frame && g_transition.awaiting_map_frame && g_transition.scene == scene &&
+        DrawTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, g_transition.color)) {
+        /* A menu can die after drawing has been scheduled. Hold its gray map
+           through that upload; reverse the fade when a fresh map actually draws. */
+        g_frame_layout.ordinary_menu_frame = true;
+    }
+    UpdateCastleFrameLayout(&g_frame_layout, map_frame, map_suppressed, ordinary_menu, g_frame_pacing);
+    if (!g_frame_layout.map_active && g_transition.phase == CASTLE_TRANSITION_NONE) {
+        SetBackdropTransitionColor(0);
+    }
+    InterlockedExchange(&g_map_active, g_frame_layout.map_active ? 1 : 0);
+    InterlockedExchange(&g_cursor_map_active, g_frame_layout.cursor_map_active ? 1 : 0);
 }
 
 static uint16_t *__cdecl RuntimeFrameCopy(int32_t source_width, int32_t source_height,
@@ -600,11 +842,71 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
    the switch to a fullscreen UI is in progress. */
 static void __fastcall RuntimeUiCursorDraw(void *input_manager, void *unused_edx) {
     (void)unused_edx;
-    bool shift = InterlockedCompareExchange(&g_map_frame, 0, 0) != 0 && !IsCursorMapActive();
+    bool shift = InterlockedCompareExchange(&g_map_frame, 0, 0) != 0 && !IsCursorMapActive() &&
+        *(const uintptr_t *)ORDINARY_MENU_OBJECT_ADDRESS == 0;
     int32_t *cache_x = (int32_t *)((uint8_t *)input_manager + 0x238u);
     if (shift) *cache_x += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
     if (g_original_ui_cursor_draw != NULL) g_original_ui_cursor_draw(input_manager);
     if (shift) *cache_x -= (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+}
+
+static bool InstallTransitionHooks(void) {
+    static const uint8_t effect_expected[] = {0xA1, 0xE8, 0x8A, 0x46, 0x00, 0x56};
+    static const uint8_t fade_out_expected[] = {0xA1, 0xE8, 0x8A, 0x46, 0x00, 0x48, 0x74, 0x08};
+    static const uint8_t fade_in_expected[] = {0xA1, 0xE8, 0x8A, 0x46, 0x00, 0x48, 0x74, 0x32};
+    static const uint8_t factory_expected[] = {0x56, 0x8B, 0x74, 0x24, 0x08, 0x8B, 0x06};
+    static const uint8_t load_expected[] = {0x6A, 0xFF, 0x68, 0x2E, 0xD1, 0x45, 0x00};
+    static const uint8_t resume_expected[] = {0x83, 0xEC, 0x10, 0x56, 0x8B, 0xF1};
+    static const uint8_t suspend_expected[] = {0x51, 0xC6, 0x81, 0x19, 0x02, 0x00, 0x00, 0x01};
+    static const uint8_t menu_release_expected[] = {0x6A, 0xFF, 0x68, 0xC8, 0xD7, 0x45, 0x00};
+    static const uint8_t system_menu_release_expected[] = {0x6A, 0xFF, 0x68, 0xA6, 0xEF, 0x45, 0x00};
+    static const uint8_t ui_draw_expected[] = {0x56, 0x8B, 0xF1, 0x8A, 0x86, 0x78, 0x05, 0x00, 0x00};
+    static const uint8_t ui_blit_expected[] = {0x8B, 0x44, 0x24, 0x10, 0x83, 0xF8, 0x1F, 0x75, 0x28};
+    static const uint8_t save_load_expected[] = {0x64, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x6A, 0xFF};
+    struct {
+        uintptr_t address;
+        const uint8_t *expected;
+        size_t size;
+        LPVOID hook;
+        LPVOID *original;
+    } hooks[] = {
+        {MAP_EFFECT_FUNCTION_ADDRESS, effect_expected, sizeof(effect_expected),
+         HOOK_ADDRESS(RuntimeMapEffect), (LPVOID *)&g_original_map_effect},
+        {FADE_OUT_FUNCTION_ADDRESS, fade_out_expected, sizeof(fade_out_expected),
+         HOOK_ADDRESS(RuntimeFadeOut), (LPVOID *)&g_original_fade_out},
+        {FADE_IN_FUNCTION_ADDRESS, fade_in_expected, sizeof(fade_in_expected),
+         HOOK_ADDRESS(RuntimeFadeIn), (LPVOID *)&g_original_fade_in},
+        {SCRIPT_COMMAND_FACTORY_ADDRESS, factory_expected, sizeof(factory_expected),
+         HOOK_ADDRESS(RuntimeCommandFactory), (LPVOID *)&g_original_command_factory},
+        {MAP_SCENE_LOAD_FUNCTION_ADDRESS, load_expected, sizeof(load_expected),
+         HOOK_ADDRESS(RuntimeMapLoad), (LPVOID *)&g_original_map_load},
+        {MAP_SCENE_RESUME_FUNCTION_ADDRESS, resume_expected, sizeof(resume_expected),
+         HOOK_ADDRESS(RuntimeMapResume), (LPVOID *)&g_original_map_resume},
+        {MAP_SCENE_SUSPEND_FUNCTION_ADDRESS, suspend_expected, sizeof(suspend_expected),
+         HOOK_ADDRESS(RuntimeMapSuspend), (LPVOID *)&g_original_map_suspend},
+        {ORDINARY_MENU_RELEASE_FUNCTION_ADDRESS, menu_release_expected, sizeof(menu_release_expected),
+         HOOK_ADDRESS(RuntimeMenuRelease), (LPVOID *)&g_original_menu_release},
+        {SYSTEM_MENU_RELEASE_FUNCTION_ADDRESS, system_menu_release_expected, sizeof(system_menu_release_expected),
+         HOOK_ADDRESS(RuntimeSystemMenuRelease), (LPVOID *)&g_original_system_menu_release},
+        {UI_OBJECT_DRAW_FUNCTION_ADDRESS, ui_draw_expected, sizeof(ui_draw_expected),
+         HOOK_ADDRESS(RuntimeUiObjectDraw), (LPVOID *)&g_original_ui_object_draw},
+        {UI_SPRITE_BLIT_FUNCTION_ADDRESS, ui_blit_expected, sizeof(ui_blit_expected),
+         HOOK_ADDRESS(RuntimeUiSpriteBlit), (LPVOID *)&g_original_ui_sprite_blit},
+        {SAVE_LOAD_FUNCTION_ADDRESS, save_load_expected, sizeof(save_load_expected),
+         HOOK_ADDRESS(RuntimeSaveLoad), (LPVOID *)&g_original_save_load},
+    };
+    /* Validate the entire set before any of these hooks is installed. */
+    for (size_t i = 0; i < _countof(hooks); ++i) {
+        if (memcmp((const void *)hooks[i].address, hooks[i].expected, hooks[i].size) != 0) {
+            SetLastError(ERROR_REVISION_MISMATCH);
+            return false;
+        }
+    }
+    for (size_t i = 0; i < _countof(hooks); ++i) {
+        if (!InstallGameHook(hooks[i].address, hooks[i].expected, hooks[i].size,
+                             hooks[i].hook, hooks[i].original)) return false;
+    }
+    return true;
 }
 
 static bool InstallWidescreenHooks(void) {
@@ -778,7 +1080,7 @@ static bool InstallWidescreenHooks(void) {
         !PatchEffectRight(EFFECT_RIGHT_3_ADDRESS)) {
         return false;
     }
-    return true;
+    return InstallTransitionHooks();
 }
 
 static bool InstallWindowedHooks(void) {

@@ -23,6 +23,7 @@ configure_file(../CastlePatchesVersion.rc.in CastleRuntimeVersion.rc @ONLY)
 add_library(CastleRuntime SHARED
     runtime_dll.c
     widescreen_backdrop.c
+    widescreen_transition.c
     ${CASTLE_RUNTIME_ASM}
     CastleRuntime.def
     "${CMAKE_CURRENT_BINARY_DIR}/CastleRuntimeVersion.rc"

@@ -15,8 +15,10 @@ enum { UI_BYTES_PER_FRAME = 640 * 480 * (int)sizeof(uint16_t) };
 static uintptr_t g_renderer[32];
 static uint32_t g_mode[4] = {0, 864, 480, 16};
 static uint16_t g_source[SOURCE_HEIGHT][SOURCE_WIDTH];
+static uint16_t g_map_source[SOURCE_HEIGHT][SOURCE_WIDTH];
 static uint16_t g_gray[480][224];
 static LPDIRECTDRAWSURFACE4 g_back, g_scratch, g_sink;
+static int g_transition_frame;
 static int64_t g_old_lock_ticks, g_old_copy_ticks, g_old_unlock_ticks;
 
 static void Check(HRESULT result, const char *action) {
@@ -70,7 +72,23 @@ static void Frame(int mode) {
     DDSURFACEDESC2 descriptor = {0};
     descriptor.dwSize = sizeof(descriptor);
     Check(IDirectDrawSurface4_Lock(g_back, NULL, &descriptor, DDLOCK_WAIT, NULL), "upload Lock");
-    if (mode == 2) {
+    if (mode >= 3) {
+        /* Match a fresh map draw, followed by the CPU transition and normal upload. */
+        memcpy(g_source, g_map_source, sizeof(g_source));
+        CaptureMapBackdrop((uintptr_t)g_renderer, 1);
+        int color = g_transition_frame++ % 16;
+        if (mode == 4) {
+            if (!DrawTransitionBackdrop((uintptr_t)g_renderer, color) ||
+                !ComposeFixedFrame((uintptr_t)g_renderer, descriptor.lpSurface, descriptor.lPitch)) exit(2);
+        } else {
+            if (!ApplyMapTransition((uintptr_t)g_renderer, color)) exit(2);
+            for (size_t y = 0; y < 480; ++y) {
+                uint8_t *row = (uint8_t *)descriptor.lpSurface + (ptrdiff_t)y * descriptor.lPitch;
+                memcpy(row, &g_source[y + 48][64], 864 * sizeof(uint16_t));
+            }
+        }
+    } else if (mode == 2) {
+        SetBackdropTransitionColor(0);
         if (!ComposeFixedFrame((uintptr_t)g_renderer, descriptor.lpSurface, descriptor.lPitch)) exit(2);
     } else {
         for (size_t y = 0; y < 480; ++y) {
@@ -112,7 +130,9 @@ int main(void) {
     for (size_t y = 0; y < SOURCE_HEIGHT; ++y) {
         for (size_t x = 0; x < SOURCE_WIDTH; ++x) g_source[y][x] = (uint16_t)(x * 37u + y * 101u);
     }
+    memcpy(g_map_source, g_source, sizeof(g_source));
     CaptureMapBackdrop((uintptr_t)g_renderer, 1);
+    if (!CaptureTransitionBackdrop((uintptr_t)g_renderer, 1)) return 2;
     uint16_t *reference = malloc(864 * 480 * sizeof(uint16_t));
     if (reference == NULL || !ComposeFixedFrame((uintptr_t)g_renderer, reference, 864 * 2)) return 2;
     for (size_t y = 0; y < 480; ++y) {
@@ -142,7 +162,9 @@ int main(void) {
         fill.dwSize = sizeof(fill);
         Check(IDirectDrawSurface4_Blt(g_scratch, NULL, NULL, NULL, DDBLT_WAIT | DDBLT_COLORFILL, &fill), "scratch fill");
         for (int sample = 0; sample < 3; ++sample) {
-            for (int mode = 0; mode < 3; ++mode) {
+            for (int mode = 0; mode < 5; ++mode) {
+                static const char *modes[] = {"upload_only", "previous", "merged", "map_transition", "menu_transition"};
+                memcpy(g_source, g_map_source, sizeof(g_source));
                 for (int iteration = 0; iteration < 2; ++iteration) Frame(mode);
                 LARGE_INTEGER start, end;
                 g_old_lock_ticks = g_old_copy_ticks = g_old_unlock_ticks = 0;
@@ -152,7 +174,7 @@ int main(void) {
                 double microseconds = (double)(end.QuadPart - start.QuadPart) * 1000000.0 /
                     (double)frequency.QuadPart / ITERATIONS;
                 printf("%s sample=%d mode=%s frame_us=%.2f\n", names[memory], sample + 1,
-                       mode == 0 ? "upload_only" : mode == 1 ? "previous" : "merged", microseconds);
+                       modes[mode], microseconds);
                 if (mode == 1) {
                     double tick_us = 1000000.0 / (double)frequency.QuadPart / ITERATIONS;
                     printf("  extra_lock_us=%.2f copy_us=%.2f extra_unlock_us=%.2f\n",
@@ -161,6 +183,7 @@ int main(void) {
                 }
             }
         }
+        memcpy(g_source, g_map_source, sizeof(g_source));
         Frame(1);
         VerifyUploadedFrame(1);
         Frame(2);

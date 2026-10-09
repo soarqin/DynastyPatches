@@ -127,6 +127,100 @@ static void SetupRenderer(void) {
     SetField(RENDERER_PIXEL_FORMAT_OFFSET, 16);
 }
 
+static uint16_t ReferenceTint(uint16_t pixel, bool rgb565, int color, bool output565) {
+    uint32_t r = (pixel >> (rgb565 ? 11 : 10)) & 31u;
+    uint32_t g = (pixel >> 5) & (rgb565 ? 63u : 31u);
+    uint32_t b = pixel & 31u;
+    r = (r << 3) | (r >> 2);
+    g = rgb565 ? (g << 2) | (g >> 4) : (g << 3) | (g >> 2);
+    b = (b << 3) | (b >> 2);
+    uint32_t gray = ((77u * r + 150u * g + 29u * b + 128u) >> 8) / 2;
+    r = (r * (uint32_t)color + gray * (uint32_t)(15 - color) + 7) / 15;
+    g = (g * (uint32_t)color + gray * (uint32_t)(15 - color) + 7) / 15;
+    b = (b * (uint32_t)color + gray * (uint32_t)(15 - color) + 7) / 15;
+    return output565 ? (uint16_t)((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3)) :
+        (uint16_t)((r >> 3) << 10 | (g >> 3) << 5 | (b >> 3));
+}
+
+static void TestMapTransition(uintptr_t renderer) {
+    SetupRenderer();
+    for (size_t y = 0; y < MAP_HEIGHT; ++y) {
+        for (size_t x = 0; x < MAP_PITCH; ++x) {
+            g_source_before[y][x] = (uint16_t)(x * 137u + y * 173u);
+        }
+    }
+    for (uint32_t format = 15; format <= 16; ++format) {
+        SetField(RENDERER_PIXEL_FORMAT_OFFSET, format);
+        for (int color = 0; color <= 15; ++color) {
+            memcpy(g_map, g_source_before, sizeof(g_map));
+            REQUIRE(ApplyMapTransition(renderer, color));
+            for (size_t y = 0; y < MAP_HEIGHT; ++y) {
+                for (size_t x = 0; x < MAP_PITCH; ++x) {
+                    bool inside = y >= MAP_BORDER_Y && y < MAP_BORDER_Y + GAME_CLIENT_HEIGHT &&
+                        x >= MAP_BORDER_X && x < MAP_BORDER_X + WIDESCREEN_CLIENT_WIDTH;
+                    uint16_t original = g_source_before[y][x];
+                    uint16_t expected = inside && color != 15 ?
+                        ReferenceTint(original, format == 16, color, format == 16) : original;
+                    REQUIRE(g_map[y][x] == expected);
+                }
+            }
+        }
+    }
+    REQUIRE(!ApplyMapTransition(renderer, -1));
+    REQUIRE(!ApplyMapTransition(renderer, 16));
+    SetBackdropTransitionColor(0);
+}
+
+static void TestFrozenTransition(uintptr_t renderer) {
+    SetupRenderer();
+    for (size_t y = 0; y < MAP_HEIGHT; ++y) {
+        for (size_t x = 0; x < MAP_PITCH; ++x) {
+            g_map[y][x] = (uint16_t)(x * 23u + y * 47u);
+        }
+    }
+    memcpy(g_source_before, g_map, sizeof(g_map));
+    for (uint32_t format = 15; format <= 16; ++format) {
+        SetField(RENDERER_PIXEL_FORMAT_OFFSET, format);
+        memcpy(g_map, g_source_before, sizeof(g_map));
+        CaptureMapBackdrop(renderer, MAP_SCENE);
+        REQUIRE(HasTransitionBackdrop(renderer, MAP_SCENE));
+        for (int step = 0; step <= 30; ++step) {
+            int color = step <= 15 ? 15 - step : step - 15;
+            SetupSurface((color & 1) != 0);
+            for (size_t y = 0; y < MAP_HEIGHT; ++y) {
+                for (size_t x = 0; x < MAP_PITCH; ++x) g_map[y][x] = SENTINEL;
+            }
+            REQUIRE(DrawTransitionBackdrop(renderer, color));
+            REQUIRE(Compose(renderer));
+            for (int y = 0; y < GAME_CLIENT_HEIGHT; ++y) {
+                const uint16_t *row = SurfaceRow(y);
+                for (int x = 0; x < WIDESCREEN_CLIENT_WIDTH; ++x) {
+                    bool output565 = format == 16 || x < SIDE_WIDTH || x >= SIDE_WIDTH + GAME_CLIENT_WIDTH;
+                    uint16_t original = g_source_before[MAP_BORDER_Y + y][MAP_BORDER_X + x];
+                    REQUIRE(row[x] == ReferenceTint(original, format == 16, color, output565));
+                }
+                for (int x = WIDESCREEN_CLIENT_WIDTH; x < SURFACE_PITCH; ++x) REQUIRE(row[x] == SENTINEL);
+            }
+            for (size_t x = 0; x < SURFACE_PITCH; ++x) {
+                REQUIRE(g_back.pixels[GAME_CLIENT_HEIGHT][x] == SENTINEL);
+            }
+        }
+    }
+    /* A renderer/source change, map disposal or explicit load invalidates the snapshot. */
+    InvalidateMapBackdrop(MAP_SCENE + 1);
+    REQUIRE(HasTransitionBackdrop(renderer, MAP_SCENE));
+    SetPointer(RENDERER_PIXELS_OFFSET, NULL);
+    REQUIRE(!HasTransitionBackdrop(renderer, MAP_SCENE));
+    SetPointer(RENDERER_PIXELS_OFFSET, g_map);
+    InvalidateMapBackdrop(MAP_SCENE);
+    REQUIRE(!DrawTransitionBackdrop(renderer, 0));
+    REQUIRE(CaptureTransitionBackdrop(renderer, MAP_SCENE));
+    ResetMapBackdrop();
+    REQUIRE(!HasTransitionBackdrop(renderer, MAP_SCENE));
+    REQUIRE(!DrawTransitionBackdrop(renderer, 0));
+    SetBackdropTransitionColor(0);
+}
+
 int main(void) {
     SetupSurface(false);
     SetupRenderer();
@@ -214,6 +308,8 @@ int main(void) {
     CheckUnwritten();
     REQUIRE(!Compose(0));
 
+    TestMapTransition(renderer);
+    TestFrozenTransition(renderer);
     puts("Castle widescreen backdrop tests passed");
     return 0;
 }

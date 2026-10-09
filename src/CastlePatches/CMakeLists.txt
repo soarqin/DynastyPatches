@@ -80,6 +80,8 @@ add_custom_command(
     DEPENDS runtime/runtime_dll.c
             runtime/widescreen_backdrop.c
             runtime/widescreen_backdrop.h
+            runtime/widescreen_transition.c
+            runtime/widescreen_transition.h
             castle_addresses.h
             runtime/runtime_hooks.asm
             runtime/runtime_hook_addresses.inc
@@ -110,6 +112,28 @@ if(BUILD_TESTING AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         target_compile_options(CastleBackdropTest PRIVATE /W4 /permissive-)
     endif()
     add_test(NAME CastleBackdropTest COMMAND CastleBackdropTest)
+    add_executable(CastleTransitionTest
+        tests/widescreen_transition_test.c
+        runtime/widescreen_transition.c
+    )
+    if(MSVC)
+        target_compile_options(CastleTransitionTest PRIVATE /W4 /permissive-)
+    endif()
+    add_test(NAME CastleTransitionTest COMMAND CastleTransitionTest)
+    if(MSVC)
+        include(Dependencies)
+        add_executable(CastleRuntimeTransitionTest
+            tests/runtime_transition_test.c
+            runtime/widescreen_transition.c
+            runtime/widescreen_backdrop.c
+        )
+        target_compile_definitions(CastleRuntimeTransitionTest PRIVATE
+            UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+        )
+        target_compile_options(CastleRuntimeTransitionTest PRIVATE /W4 /permissive- /utf-8)
+        target_link_libraries(CastleRuntimeTransitionTest PRIVATE dbghelp minhook)
+        add_test(NAME CastleRuntimeTransitionTest COMMAND CastleRuntimeTransitionTest)
+    endif()
 endif()
 
 target_compile_definitions(CastlePatches PRIVATE
