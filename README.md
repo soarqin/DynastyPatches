@@ -55,6 +55,8 @@ CastlePatches 的版本由 `cmake/CastlePatchesVersion.cmake` 统一管理，并
 
 ## 使用说明
 
+两个启动器都可在左侧切换设置分类。「仅保存」将各页选项写入启动器同目录的 INI 文件。「恢复默认」会重置各页选项，点击「仅保存」或「启动游戏」后才写入文件。
+
 将 `CastlePatches.exe` 与 `CastleRuntime.dll` 放在同一目录，启动后选择需要的补丁并点击启动按钮。程序会优先查找当前目录下的 `RPG.exe`、`exe/RPG.exe` 和 `Castle/exe/RPG.exe`；均未找到时提供文件选择。
 
 将 `SwordmanPatches.exe` 与 `SwordmanRuntime.dll` 放在同一目录，选择 SHA-256 为 `2ad46144eaca95b92a7d28ad946687df09fb0c3155cf3ccafa8381fba53afbb2` 的 `Sm_win2.exe` 后点击启动。启动器会先校验完整文件，再创建挂起进程并注入运行时；不匹配的 `Swordman.exe`、`Sm_win1.exe` 和其他修改版会被拒绝。

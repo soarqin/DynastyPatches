@@ -43,6 +43,7 @@ add_custom_command(
 
 add_executable(CastlePatches WIN32
     main.c
+    ../launcher/launcher_ui.c
     CastlePatches.rc
     "${CMAKE_CURRENT_BINARY_DIR}/CastlePatchesVersion.rc"
     "${LOADER_STUB_C}"
@@ -137,6 +138,7 @@ if(BUILD_TESTING AND CMAKE_SIZEOF_VOID_P EQUAL 4)
 endif()
 
 target_compile_definitions(CastlePatches PRIVATE
+    "LAUNCHER_VERSION=L\"${PROJECT_VERSION}\""
     UNICODE
     _UNICODE
     WIN32_LEAN_AND_MEAN

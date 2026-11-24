@@ -1,5 +1,5 @@
 #include <windows.h>
-#include <commctrl.h>
+#include "../launcher/launcher_ui.h"
 #include <commdlg.h>
 
 #include "file_identity.h"
@@ -17,25 +17,42 @@
 #define _countof(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 
+enum { BASIC, COMBAT, DISPLAY };
 enum {
-    ID_NO_CD = 100,
-    ID_SPEED,
-    ID_CHESTS,
-    ID_ATTRIBUTES,
-    ID_CAST_AFTER_MOVE,
-    ID_SUMMON_ITEM_COPY,
-    ID_SAVE_ANYTIME,
-    ID_GROWTH_NORMAL,
-    ID_GROWTH_MAX,
-    ID_GROWTH_MIN,
-    ID_RESIZABLE,
-    ID_MOVIE,
-    ID_SMOOTH,
-    ID_CLEANUP,
-    ID_SOFTWARE_MOVIE,
-    ID_SCALE,
-    ID_LAUNCH,
-    ID_STATUS,
+    ID_NO_CD, ID_CHESTS, ID_SUMMON_ITEM_COPY, ID_SAVE_ANYTIME,
+    ID_SPEED, ID_CAST_AFTER_MOVE, ID_ATTRIBUTES, ID_GROWTH,
+    ID_RESIZABLE, ID_SCALE, ID_MOVIE, ID_SOFTWARE_MOVIE, ID_SMOOTH, ID_CLEANUP
+};
+
+static const LauncherPage pages[] = {
+    {L"基础补丁", L"读取使用「随时中途存档」保存的进度时，也需开启此选项。"},
+    {L"战斗与成长", L"成长方式决定角色升级时的属性增长。"},
+    {L"画面设置", L"初始窗口分辨率独立于窗口模式。开启电影缩放后可选择软件电影解码。"},
+};
+
+static const wchar_t *const scales[] = {
+    L"1×（640 × 400）", L"1.5×（960 × 600）", L"2×（1280 × 800）",
+    L"2.5×（1600 × 1000）", L"3×（1920 × 1200）",
+};
+static const wchar_t *const growth_modes[] = {L"正常成长", L"最大成长", L"最小成长"};
+static const LauncherRange scale_range = {2, 6, scales};
+static const LauncherRange growth_range = {SWORDMAN_GROWTH_NORMAL, SWORDMAN_GROWTH_MINIMUM, growth_modes};
+
+static LauncherOption settings[] = {
+    [ID_NO_CD] = {BASIC, L"免 CD", L"Patches", L"NoCd"},
+    [ID_CHESTS] = {BASIC, L"显示全部宝箱", L"Patches", L"Chests"},
+    [ID_SUMMON_ITEM_COPY] = {BASIC, L"恢复召唤兽复制物品特性", L"Patches", L"SummonItemCopy"},
+    [ID_SAVE_ANYTIME] = {BASIC, L"随时中途存档", L"Patches", L"SaveAnytime"},
+    [ID_SPEED] = {COMBAT, L"加速行动", L"Patches", L"Speed"},
+    [ID_CAST_AFTER_MOVE] = {COMBAT, L"移动后可施法", L"Patches", L"CastAfterMove"},
+    [ID_ATTRIBUTES] = {COMBAT, L"属性上限 999", L"Patches", L"Attributes"},
+    [ID_GROWTH] = {COMBAT, L"成长方式", L"Patches", L"Growth", SWORDMAN_GROWTH_NORMAL, &growth_range},
+    [ID_RESIZABLE] = {DISPLAY, L"窗口模式", L"Patches", L"Resizable"},
+    [ID_SCALE] = {DISPLAY, L"初始窗口分辨率", L"Display", L"Scale2", 2, &scale_range},
+    [ID_MOVIE] = {DISPLAY, L"电影缩放", L"Patches", L"Movie"},
+    [ID_SOFTWARE_MOVIE] = {DISPLAY, L"软件电影解码", L"Patches", L"SoftwareMovie", 0, NULL, &settings[ID_MOVIE], true},
+    [ID_SMOOTH] = {DISPLAY, L"平滑电影画面", L"Patches", L"Smooth"},
+    [ID_CLEANUP] = {DISPLAY, L"电影播放清理", L"Patches", L"MovieCleanup"},
 };
 
 enum {
@@ -51,12 +68,6 @@ enum {
 
 _Static_assert(STUB_OPTIONS + sizeof(SwordmanOptions) <= STUB_GETMODULE,
                "Loader options must not overlap API pointers");
-
-static HINSTANCE g_instance;
-static HWND g_window;
-static HWND g_status;
-static HWND g_scale_combo;
-static HFONT g_font;
 
 static const wchar_t kConfigFileName[] = L"SwordmanPatches.ini";
 
@@ -108,66 +119,6 @@ static void SaveGamePath(const wchar_t *path) {
     if (ConfigPath(config_path, _countof(config_path))) {
         WritePrivateProfileStringW(L"Game", L"Path", path, config_path);
     }
-}
-
-static bool LoadConfigBool(const wchar_t *key, bool default_value) {
-    wchar_t config_path[MAX_PATH];
-    if (!ConfigPath(config_path, _countof(config_path))) return default_value;
-    return GetPrivateProfileIntW(L"Patches", key, default_value ? 1 : 0, config_path) != 0;
-}
-
-static uint32_t LoadConfigGrowth(void) {
-    wchar_t config_path[MAX_PATH];
-    if (!ConfigPath(config_path, _countof(config_path))) return SWORDMAN_GROWTH_NORMAL;
-    int value = GetPrivateProfileIntW(L"Patches", L"Growth", SWORDMAN_GROWTH_NORMAL, config_path);
-    return value >= SWORDMAN_GROWTH_NORMAL && value <= SWORDMAN_GROWTH_MINIMUM
-               ? (uint32_t)value
-               : SWORDMAN_GROWTH_NORMAL;
-}
-
-static uint32_t LoadConfigScale(void) {
-    wchar_t config_path[MAX_PATH];
-    if (!ConfigPath(config_path, _countof(config_path))) return 2;
-    uint32_t value = GetPrivateProfileIntW(L"Display", L"Scale2", 2, config_path);
-    return value >= 2 && value <= 6 ? value : 2;
-}
-
-static void SaveOptions(const SwordmanOptions *options) {
-    wchar_t config_path[MAX_PATH];
-    if (!ConfigPath(config_path, _countof(config_path))) return;
-
-    struct FlagSetting {
-        const wchar_t *key;
-        uint32_t flag;
-    };
-    static const struct FlagSetting settings[] = {
-        {L"NoCd", SWORDMAN_NO_CD},
-        {L"Speed", SWORDMAN_SPEED},
-        {L"Chests", SWORDMAN_CHESTS},
-        {L"Attributes", SWORDMAN_ATTRIBUTE_999},
-        {L"CastAfterMove", SWORDMAN_CAST_AFTER_MOVE},
-        {L"SummonItemCopy", SWORDMAN_SUMMON_ITEM_COPY},
-        {L"SaveAnytime", SWORDMAN_SAVE_ANYTIME},
-        {L"Resizable", SWORDMAN_RESIZABLE},
-        {L"Movie", SWORDMAN_MOVIE},
-        {L"Smooth", SWORDMAN_SMOOTH},
-        {L"MovieCleanup", SWORDMAN_MOVIE_CLEANUP},
-        {L"SoftwareMovie", SWORDMAN_SOFTWARE_MOVIE},
-    };
-    for (size_t index = 0; index < _countof(settings); ++index) {
-        WritePrivateProfileStringW(L"Patches",
-                                   settings[index].key,
-                                   (options->flags & settings[index].flag) != 0 ? L"1" : L"0",
-                                   config_path);
-    }
-
-    wchar_t growth[16];
-    _snwprintf_s(growth, _countof(growth), _TRUNCATE, L"%lu", (unsigned long)options->growth);
-    WritePrivateProfileStringW(L"Patches", L"Growth", growth, config_path);
-
-    wchar_t scale[16];
-    _snwprintf_s(scale, _countof(scale), _TRUNCATE, L"%lu", (unsigned long)options->scale2);
-    WritePrivateProfileStringW(L"Display", L"Scale2", scale, config_path);
 }
 
 static bool ReadWholeFile(const wchar_t *path, uint8_t **data, size_t *size) {
@@ -323,10 +274,6 @@ static bool InjectRuntime(HANDLE process, const wchar_t *dll_path,
     return success;
 }
 
-static void SetStatus(const wchar_t *message) {
-    SetWindowTextW(g_status, message);
-}
-
 static void ShowError(HWND owner, const wchar_t *action) {
     DWORD error = GetLastError();
     wchar_t system_message[512] = L"";
@@ -336,15 +283,6 @@ static void ShowError(HWND owner, const wchar_t *action) {
     _snwprintf_s(message, _countof(message), _TRUNCATE,
                  L"%ls失败（错误 %lu）：%ls", action, (unsigned long)error, system_message);
     MessageBoxW(owner, message, L"天地劫：神魔至尊传补丁工具", MB_OK | MB_ICONERROR);
-}
-
-static HWND AddControl(HWND parent, const wchar_t *class_name, const wchar_t *text,
-                       DWORD style, int x, int y, int width, int height, int id) {
-    HWND control = CreateWindowExW(0, class_name, text, WS_CHILD | WS_VISIBLE | style,
-                                   x, y, width, height, parent, (HMENU)(INT_PTR)id,
-                                   g_instance, NULL);
-    SendMessageW(control, WM_SETFONT, (WPARAM)g_font, TRUE);
-    return control;
 }
 
 static bool SelectGamePath(HWND owner, wchar_t *path, size_t capacity) {
@@ -369,49 +307,31 @@ static bool SelectGamePath(HWND owner, wchar_t *path, size_t capacity) {
     return true;
 }
 
-static bool IsChecked(int control_id) {
-    return IsDlgButtonChecked(g_window, control_id) == BST_CHECKED;
-}
-
 static SwordmanOptions ReadOptions(void) {
-    SwordmanOptions options = {0, SWORDMAN_GROWTH_NORMAL, 2};
-    const int ids[] = {
-        ID_NO_CD, ID_SPEED, ID_CHESTS, ID_ATTRIBUTES, ID_CAST_AFTER_MOVE,
-        ID_SUMMON_ITEM_COPY, ID_SAVE_ANYTIME, ID_RESIZABLE, ID_MOVIE,
-        ID_SMOOTH, ID_CLEANUP, ID_SOFTWARE_MOVIE,
+    static const uint32_t flags[] = {
+        [ID_NO_CD] = SWORDMAN_NO_CD, [ID_CHESTS] = SWORDMAN_CHESTS,
+        [ID_SUMMON_ITEM_COPY] = SWORDMAN_SUMMON_ITEM_COPY, [ID_SAVE_ANYTIME] = SWORDMAN_SAVE_ANYTIME,
+        [ID_SPEED] = SWORDMAN_SPEED, [ID_CAST_AFTER_MOVE] = SWORDMAN_CAST_AFTER_MOVE,
+        [ID_ATTRIBUTES] = SWORDMAN_ATTRIBUTE_999, [ID_RESIZABLE] = SWORDMAN_RESIZABLE,
+        [ID_MOVIE] = SWORDMAN_MOVIE, [ID_SOFTWARE_MOVIE] = SWORDMAN_SOFTWARE_MOVIE,
+        [ID_SMOOTH] = SWORDMAN_SMOOTH, [ID_CLEANUP] = SWORDMAN_MOVIE_CLEANUP,
     };
-    const uint32_t flags[] = {
-        SWORDMAN_NO_CD, SWORDMAN_SPEED, SWORDMAN_CHESTS, SWORDMAN_ATTRIBUTE_999,
-        SWORDMAN_CAST_AFTER_MOVE, SWORDMAN_SUMMON_ITEM_COPY, SWORDMAN_SAVE_ANYTIME,
-        SWORDMAN_RESIZABLE, SWORDMAN_MOVIE, SWORDMAN_SMOOTH,
-        SWORDMAN_MOVIE_CLEANUP, SWORDMAN_SOFTWARE_MOVIE,
-    };
-    for (size_t index = 0; index < _countof(ids); ++index) {
-        if (IsChecked(ids[index])) options.flags |= flags[index];
+    SwordmanOptions options = {.growth = settings[ID_GROWTH].value, .scale2 = settings[ID_SCALE].value};
+    for (size_t i = 0; i < _countof(flags); ++i) {
+        if (settings[i].value) options.flags |= flags[i];
     }
-    if (IsChecked(ID_GROWTH_MAX)) options.growth = SWORDMAN_GROWTH_MAXIMUM;
-    if (IsChecked(ID_GROWTH_MIN)) options.growth = SWORDMAN_GROWTH_MINIMUM;
-    int scale_index = (int)SendMessageW(g_scale_combo, CB_GETCURSEL, 0, 0);
-    if (scale_index >= 0 && scale_index < 5) options.scale2 = (uint32_t)scale_index + 2;
     return options;
-}
-
-static void UpdateMovieControls(HWND window) {
-    bool movie = IsChecked(ID_MOVIE);
-    EnableWindow(GetDlgItem(window, ID_SOFTWARE_MOVIE), movie);
-    if (!movie) CheckDlgButton(window, ID_SOFTWARE_MOVIE, BST_UNCHECKED);
-    InvalidateRect(window, NULL, TRUE);
 }
 
 static void Launch(HWND owner) {
     wchar_t path[MAX_PATH];
     if (!SelectGamePath(owner, path, _countof(path))) {
-        SetStatus(L"未选择可启动的 Sm_win2.exe。等待启动。");
+        LauncherSetStatus(L"未选择 Sm_win2.exe。");
         return;
     }
 
     SwordmanOptions options = ReadOptions();
-    SaveOptions(&options);
+    LauncherSaveOptions();
     if (!SwordmanHashFile(path, kSwordmanImageHash)) {
         SetLastError(ERROR_REVISION_MISMATCH);
         ShowError(owner, L"校验 Sm_win2.exe");
@@ -439,7 +359,7 @@ static void Launch(HWND owner) {
         _snwprintf_s(status, _countof(status), _TRUNCATE,
                      L"已向 PID %lu 写入所选补丁并启动游戏。原始 Sm_win2.exe 未被修改。",
                      (unsigned long)info.dwProcessId);
-        SetStatus(status);
+        LauncherSetStatus(status);
         CloseHandle(info.hThread);
         CloseHandle(info.hProcess);
         return;
@@ -453,154 +373,13 @@ static void Launch(HWND owner) {
     ShowError(owner, L"注入 SwordmanRuntime.dll");
 }
 
-static void CreateControls(HWND window) {
-    g_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    AddControl(window, L"STATIC", L"游戏补丁", SS_LEFT, 18, 18, 140, 22, -1);
-    AddControl(window, L"BUTTON", L"免 CD", BS_AUTOCHECKBOX, 18, 44, 300, 24, ID_NO_CD);
-    AddControl(window, L"BUTTON", L"加速行动", BS_AUTOCHECKBOX, 18, 70, 300, 24, ID_SPEED);
-    AddControl(window, L"BUTTON", L"显示全部宝箱", BS_AUTOCHECKBOX, 18, 96, 300, 24, ID_CHESTS);
-    AddControl(window, L"BUTTON", L"属性上限 999", BS_AUTOCHECKBOX, 18, 122, 300, 24, ID_ATTRIBUTES);
-    AddControl(window, L"BUTTON", L"移动后可施法", BS_AUTOCHECKBOX, 18, 148, 300, 24, ID_CAST_AFTER_MOVE);
-    AddControl(window, L"BUTTON", L"恢复召唤兽复制物品特性", BS_AUTOCHECKBOX, 18, 174, 320, 24, ID_SUMMON_ITEM_COPY);
-    AddControl(window, L"BUTTON", L"随时中途存档", BS_AUTOCHECKBOX, 18, 200, 300, 24, ID_SAVE_ANYTIME);
-    AddControl(window, L"STATIC", L"成长方式", SS_LEFT, 18, 232, 140, 22, -1);
-    AddControl(window, L"BUTTON", L"正常成长", BS_AUTORADIOBUTTON | WS_GROUP, 18, 258, 100, 24, ID_GROWTH_NORMAL);
-    AddControl(window, L"BUTTON", L"最大成长", BS_AUTORADIOBUTTON, 126, 258, 100, 24, ID_GROWTH_MAX);
-    AddControl(window, L"BUTTON", L"最小成长", BS_AUTORADIOBUTTON, 234, 258, 100, 24, ID_GROWTH_MIN);
-
-    AddControl(window, L"STATIC", L"显示模式", SS_LEFT, 360, 18, 140, 22, -1);
-    AddControl(window, L"BUTTON", L"窗口模式", BS_AUTOCHECKBOX, 360, 44, 220, 24, ID_RESIZABLE);
-    AddControl(window, L"BUTTON", L"电影缩放", BS_AUTOCHECKBOX, 360, 70, 220, 24, ID_MOVIE);
-    AddControl(window, L"BUTTON", L"平滑电影画面", BS_AUTOCHECKBOX, 360, 96, 220, 24, ID_SMOOTH);
-    AddControl(window, L"BUTTON", L"电影播放清理", BS_AUTOCHECKBOX, 360, 122, 220, 24, ID_CLEANUP);
-    AddControl(window, L"BUTTON", L"软件电影解码", BS_AUTOCHECKBOX, 360, 148, 220, 24, ID_SOFTWARE_MOVIE);
-    AddControl(window, L"STATIC", L"初始窗口分辨率", SS_LEFT, 360, 184, 220, 22, -1);
-    g_scale_combo = AddControl(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP,
-                               360, 210, 220, 140, ID_SCALE);
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1×（640 × 400）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1.5×（960 × 600）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"2×（1280 × 800）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"2.5×（1600 × 1000）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"3×（1920 × 1200）");
-    SendMessageW(g_scale_combo, CB_SETCURSEL, (WPARAM)(LoadConfigScale() - 2), 0);
-    AddControl(window, L"STATIC",
-               L"启动时创建已挂起的进程，仅向该进程内存写入补丁。",
-               SS_LEFT, 18, 330, 552, 22, -1);
-    AddControl(window, L"BUTTON", L"应用补丁并启动游戏", BS_DEFPUSHBUTTON,
-               360, 360, 210, 32, ID_LAUNCH);
-    g_status = AddControl(window, L"STATIC", L"等待启动。", SS_LEFT,
-                          18, 368, 330, 40, ID_STATUS);
-
-    const struct {
-        int id;
-        const wchar_t *key;
-    } checks[] = {
-        {ID_NO_CD, L"NoCd"},
-        {ID_SPEED, L"Speed"},
-        {ID_CHESTS, L"Chests"},
-        {ID_ATTRIBUTES, L"Attributes"},
-        {ID_CAST_AFTER_MOVE, L"CastAfterMove"},
-        {ID_SUMMON_ITEM_COPY, L"SummonItemCopy"},
-        {ID_SAVE_ANYTIME, L"SaveAnytime"},
-        {ID_RESIZABLE, L"Resizable"},
-        {ID_MOVIE, L"Movie"},
-        {ID_SMOOTH, L"Smooth"},
-        {ID_CLEANUP, L"MovieCleanup"},
-        {ID_SOFTWARE_MOVIE, L"SoftwareMovie"},
-    };
-    for (size_t index = 0; index < _countof(checks); ++index) {
-        CheckDlgButton(window, checks[index].id,
-                       LoadConfigBool(checks[index].key, false) ? BST_CHECKED : BST_UNCHECKED);
-    }
-    uint32_t growth = LoadConfigGrowth();
-    int growth_id = growth == SWORDMAN_GROWTH_MAXIMUM ? ID_GROWTH_MAX :
-                    growth == SWORDMAN_GROWTH_MINIMUM ? ID_GROWTH_MIN : ID_GROWTH_NORMAL;
-    CheckDlgButton(window, growth_id, BST_CHECKED);
-    UpdateMovieControls(window);
-}
-
-static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
-    (void)l_param;
-    switch (message) {
-        case WM_CREATE:
-            g_window = window;
-            CreateControls(window);
-            return 0;
-        case WM_COMMAND:
-            if (HIWORD(w_param) == BN_CLICKED) {
-                if (LOWORD(w_param) == ID_MOVIE) {
-                    UpdateMovieControls(window);
-                    return 0;
-                }
-                if (LOWORD(w_param) == ID_LAUNCH) {
-                    Launch(window);
-                    return 0;
-                }
-            }
-            return 0;
-        case WM_CTLCOLORSTATIC: {
-            HDC dc = (HDC)w_param;
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
-            return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
-        }
-        case WM_CTLCOLORBTN: {
-            HDC dc = (HDC)w_param;
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
-            return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
-        }
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-        default:
-            return DefWindowProcW(window, message, w_param, l_param);
-    }
-}
-
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show) {
     (void)previous;
     (void)command_line;
-    g_instance = instance;
-
-    INITCOMMONCONTROLSEX common_controls = {
-        sizeof(common_controls), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES
+    static const LauncherSpec launcher = {
+        L"SwordmanPatchesWindow", L"《天地劫：神魔至尊传》补丁工具", L"神魔至尊传",
+        L"SwordmanPatches  /  v" LAUNCHER_VERSION, pages, _countof(pages), settings, _countof(settings),
+        ConfigPath, Launch,
     };
-    InitCommonControlsEx(&common_controls);
-
-    WNDCLASSW klass;
-    ZeroMemory(&klass, sizeof(klass));
-    klass.hInstance = instance;
-    klass.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    klass.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    klass.lpszClassName = L"SwordmanPatchesWindow";
-    klass.lpfnWndProc = WindowProc;
-    if (RegisterClassW(&klass) == 0) return 1;
-
-    HWND window = CreateWindowExW(WS_EX_APPWINDOW,
-                                  klass.lpszClassName,
-                                  L"《天地劫：神魔至尊传》补丁工具",
-                                  WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                                  0, 0, 604, 460, NULL, NULL, instance, NULL);
-    if (window == NULL) return 1;
-    g_window = window;
-
-    RECT work_area = {0};
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
-    RECT window_rect = {0};
-    GetWindowRect(window, &window_rect);
-    int width = window_rect.right - window_rect.left;
-    int height = window_rect.bottom - window_rect.top;
-    int x = work_area.left + ((work_area.right - work_area.left) - width) / 2;
-    int y = work_area.top + ((work_area.bottom - work_area.top) - height) / 2;
-    SetWindowPos(window, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-
-    ShowWindow(window, show);
-    UpdateWindow(window);
-    MSG message;
-    while (GetMessageW(&message, NULL, 0, 0) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
-    return (int)message.wParam;
+    return LauncherRun(instance, show, &launcher);
 }

@@ -1,5 +1,5 @@
 #include <windows.h>
-#include <commctrl.h>
+#include "../launcher/launcher_ui.h"
 #include <commdlg.h>
 
 #include <stdbool.h>
@@ -20,26 +20,40 @@
    the value has been widened at the call boundary. */
 #define PATCH_LENGTH(array) ((uint32_t)(sizeof(array)))
 
+enum { BASIC, RULES, DISPLAY };
 enum {
-    ID_NO_CD = 100,
-    ID_MINGYU_FIX,
-    ID_RESISTANCE_FIX,
-    ID_ANYWHERE_SAVE,
-    ID_MAX_GROWTH,
-    ID_MAX_LOOT,
-    ID_WINDOWED,
-    ID_CURSOR_LOCK,
-    ID_WIDESCREEN,
-    ID_SCALE,
-    ID_EXP_MULTIPLIER,
-    ID_EXP_MULTIPLIER_SPIN,
-    ID_MONEY_MULTIPLIER,
-    ID_MONEY_MULTIPLIER_SPIN,
-    ID_DYNAMIC_ENCOUNTER_RATE,
-    ID_LAUNCH,
-    ID_STATUS,
+    ID_NO_CD, ID_MINGYU_FIX, ID_RESISTANCE_FIX, ID_ANYWHERE_SAVE,
+    ID_MAX_GROWTH, ID_MAX_LOOT, ID_EXP_MULTIPLIER, ID_MONEY_MULTIPLIER, ID_DYNAMIC_ENCOUNTER_RATE,
+    ID_WINDOWED, ID_SCALE, ID_CURSOR_LOCK, ID_WIDESCREEN
 };
 
+static const LauncherPage pages[] = {
+    {L"基础补丁", L"启动游戏时，所选补丁会写入本次游戏进程。"},
+    {L"成长与遇敌", L"动态遇敌率热键：Ctrl+F10 恢复 100%，Ctrl+F11 降低，Ctrl+F12 提高。"},
+    {L"画面设置", L"开启窗口模式后，可调整窗口倍率、锁定鼠标或启用宽屏地图。"},
+};
+
+static const wchar_t *const scales[] = {
+    L"1×（640 × 480）", L"1.5×（960 × 720）", L"2×（1280 × 960）",
+    L"2.5×（1600 × 1200）", L"3×（1920 × 1440）",
+};
+static const LauncherRange scale_range = {2, 6, scales}, multiplier_range = {1, 10, NULL};
+
+static LauncherOption settings[] = {
+    [ID_NO_CD] = {BASIC, L"免 CD", L"Patches", L"NoCd", 1},
+    [ID_MINGYU_FIX] = {BASIC, L"修复「冥狱杀阵」可被习得", L"Patches", L"MingyuFix", 1},
+    [ID_RESISTANCE_FIX] = {BASIC, L"修复菜单后的抗性显示与实际值不一致", L"Patches", L"ResistanceFix", 1},
+    [ID_ANYWHERE_SAVE] = {BASIC, L"随时存档", L"Patches", L"AnywhereSave", 1},
+    [ID_MAX_GROWTH] = {RULES, L"最大成长", L"Patches", L"MaxGrowth"},
+    [ID_MAX_LOOT] = {RULES, L"最大掉宝", L"Patches", L"MaxLoot"},
+    [ID_EXP_MULTIPLIER] = {RULES, L"经验倍率", L"Patches", L"ExperienceMultiplier", 1, &multiplier_range},
+    [ID_MONEY_MULTIPLIER] = {RULES, L"金钱倍率", L"Patches", L"MoneyMultiplier", 1, &multiplier_range},
+    [ID_DYNAMIC_ENCOUNTER_RATE] = {RULES, L"动态调整遇敌率", L"Patches", L"DynamicEncounterRate"},
+    [ID_WINDOWED] = {DISPLAY, L"窗口模式（修正鼠标坐标）", L"Display", L"Windowed"},
+    [ID_SCALE] = {DISPLAY, L"窗口倍率", L"Display", L"Scale2", 2, &scale_range, &settings[ID_WINDOWED]},
+    [ID_CURSOR_LOCK] = {DISPLAY, L"锁定鼠标在窗口内", L"Display", L"CursorLock", 0, NULL, &settings[ID_WINDOWED]},
+    [ID_WIDESCREEN] = {DISPLAY, L"宽屏地图（864 × 480）", L"Display", L"Widescreen", 0, NULL, &settings[ID_WINDOWED]},
+};
 
 typedef struct PatchSite {
     uint32_t address;
@@ -71,13 +85,6 @@ typedef struct LaunchOptions {
     bool dynamic_encounter_rate;
 } LaunchOptions;
 
-static HINSTANCE g_instance;
-static HWND g_main_window;
-static HWND g_scale_combo;
-static HWND g_experience_multiplier_edit;
-static HWND g_money_multiplier_edit;
-static HWND g_status;
-static HFONT g_font;
 static DWORD g_runtime_start_result;
 
 static const wchar_t kConfigFileName[] = L"CastlePatches.ini";
@@ -148,10 +155,6 @@ static const PatchGroup kResistanceGroup = {L"修复抗性", kResistanceSites, _
 static const PatchGroup kAnywhereSaveGroup = {L"随时存档", kAnywhereSaveSites, _countof(kAnywhereSaveSites)};
 static const PatchGroup kMaxGrowthGroup = {L"最大成长", kMaxGrowthSites, _countof(kMaxGrowthSites)};
 static const PatchGroup kMaxLootGroup = {L"最大掉宝", kMaxLootSites, _countof(kMaxLootSites)};
-static void SetStatus(const wchar_t *message) {
-    SetWindowTextW(g_status, message);
-}
-
 static bool GetConfigPath(wchar_t *path, size_t capacity) {
     DWORD length = GetModuleFileNameW(NULL, path, (DWORD)capacity);
     if (length == 0 || length >= capacity) {
@@ -211,93 +214,6 @@ static void SaveGamePath(const wchar_t *path) {
     }
 }
 
-static int ScaleValueToIndex(uint32_t scale2) {
-    static const uint32_t values[] = {2, 3, 4, 5, 6};
-    for (size_t index = 0; index < _countof(values); ++index) {
-        if (values[index] == scale2) {
-            return (int)index;
-        }
-    }
-    return 0;
-}
-
-static uint32_t ScaleIndexToValue(int index) {
-    static const uint32_t values[] = {2, 3, 4, 5, 6};
-    if (index < 0 || (size_t)index >= _countof(values)) {
-        return values[0];
-    }
-    return values[index];
-}
-
-static bool LoadConfigBool(const wchar_t *key, bool default_value) {
-    wchar_t config_path[MAX_PATH];
-    if (!GetConfigPath(config_path, _countof(config_path))) {
-        return default_value;
-    }
-    return GetPrivateProfileIntW(L"Patches", key, default_value ? 1 : 0, config_path) != 0;
-}
-
-static bool LoadConfigDisplayBool(const wchar_t *key, bool default_value) {
-    wchar_t config_path[MAX_PATH];
-    if (!GetConfigPath(config_path, _countof(config_path))) {
-        return default_value;
-    }
-    return GetPrivateProfileIntW(L"Display", key, default_value ? 1 : 0, config_path) != 0;
-}
-
-static uint32_t LoadConfigScale(void) {
-    wchar_t config_path[MAX_PATH];
-    if (!GetConfigPath(config_path, _countof(config_path))) {
-        return 2;
-    }
-    return ScaleIndexToValue(ScaleValueToIndex((uint32_t)GetPrivateProfileIntW(L"Display", L"Scale2", 2, config_path)));
-}
-
-static uint32_t ClampMultiplier(uint32_t value) {
-    return value < 1 ? 1 : value > 10 ? 10 : value;
-}
-
-static uint32_t LoadConfigMultiplier(const wchar_t *key) {
-    wchar_t config_path[MAX_PATH];
-    if (!GetConfigPath(config_path, _countof(config_path))) {
-        return 1;
-    }
-    return ClampMultiplier((uint32_t)GetPrivateProfileIntW(L"Patches", key, 1, config_path));
-}
-
-static uint32_t ReadMultiplier(HWND edit) {
-    BOOL translated = FALSE;
-    uint32_t value = (uint32_t)GetDlgItemInt(g_main_window, GetDlgCtrlID(edit), &translated, FALSE);
-    return translated ? ClampMultiplier(value) : 1;
-}
-
-static void SaveOptions(const LaunchOptions *options) {
-    wchar_t config_path[MAX_PATH];
-    if (!GetConfigPath(config_path, _countof(config_path))) {
-        return;
-    }
-
-    WritePrivateProfileStringW(L"Patches", L"NoCd", options->no_cd ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Patches", L"MingyuFix", options->mingyu_fix ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Patches", L"ResistanceFix", options->resistance_fix ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Patches", L"AnywhereSave", options->anywhere_save ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Patches", L"MaxGrowth", options->max_growth ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Patches", L"MaxLoot", options->max_loot ? L"1" : L"0", config_path);
-    wchar_t multiplier[16];
-    _snwprintf_s(multiplier, _countof(multiplier), _TRUNCATE, L"%lu", (unsigned long)options->experience_multiplier);
-    WritePrivateProfileStringW(L"Patches", L"ExperienceMultiplier", multiplier, config_path);
-    _snwprintf_s(multiplier, _countof(multiplier), _TRUNCATE, L"%lu", (unsigned long)options->money_multiplier);
-    WritePrivateProfileStringW(L"Patches", L"MoneyMultiplier", multiplier, config_path);
-    WritePrivateProfileStringW(L"Patches", L"DynamicEncounterRate", options->dynamic_encounter_rate ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Display", L"Windowed", options->windowed ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Display", L"CursorLock", options->cursor_lock ? L"1" : L"0", config_path);
-    WritePrivateProfileStringW(L"Display", L"Widescreen", options->widescreen ? L"1" : L"0", config_path);
-
-    wchar_t scale[16];
-    _snwprintf_s(scale, _countof(scale), _TRUNCATE, L"%lu", (unsigned long)options->scale2);
-    WritePrivateProfileStringW(L"Display", L"Scale2", scale, config_path);
-}
-
 static void ShowWin32Error(HWND owner, const wchar_t *action) {
     DWORD error = GetLastError();
     wchar_t system_message[512] = L"";
@@ -318,10 +234,6 @@ static void ShowWin32Error(HWND owner, const wchar_t *action) {
                  (unsigned long)error,
                  system_message);
     MessageBoxW(owner, message, L"幽城幻剑录补丁工具", MB_OK | MB_ICONERROR);
-}
-
-static bool IsChecked(int control_id) {
-    return IsDlgButtonChecked(g_main_window, control_id) == BST_CHECKED;
 }
 
 static bool ReadProcessExact(HANDLE process, uint32_t address, void *buffer, uint32_t length) {
@@ -619,26 +531,26 @@ static bool SelectGamePath(HWND owner, wchar_t *path, size_t capacity) {
 static void Launch(HWND owner) {
     wchar_t path[MAX_PATH];
     if (!SelectGamePath(owner, path, _countof(path))) {
-        SetStatus(L"未选择可启动的 RPG.exe。等待启动。");
+        LauncherSetStatus(L"未选择 RPG.exe。");
         return;
     }
 
+    LauncherSaveOptions();
     LaunchOptions options = {
-        .no_cd = IsChecked(ID_NO_CD),
-        .mingyu_fix = IsChecked(ID_MINGYU_FIX),
-        .resistance_fix = IsChecked(ID_RESISTANCE_FIX),
-        .anywhere_save = IsChecked(ID_ANYWHERE_SAVE),
-        .max_growth = IsChecked(ID_MAX_GROWTH),
-        .max_loot = IsChecked(ID_MAX_LOOT),
-        .windowed = IsChecked(ID_WINDOWED),
-        .cursor_lock = IsChecked(ID_CURSOR_LOCK),
-        .widescreen = IsChecked(ID_WIDESCREEN),
-        .scale2 = ScaleIndexToValue((int)SendMessageW(g_scale_combo, CB_GETCURSEL, 0, 0)),
-        .experience_multiplier = ReadMultiplier(g_experience_multiplier_edit),
-        .money_multiplier = ReadMultiplier(g_money_multiplier_edit),
-        .dynamic_encounter_rate = IsChecked(ID_DYNAMIC_ENCOUNTER_RATE),
+        .no_cd = settings[ID_NO_CD].value != 0,
+        .mingyu_fix = settings[ID_MINGYU_FIX].value != 0,
+        .resistance_fix = settings[ID_RESISTANCE_FIX].value != 0,
+        .anywhere_save = settings[ID_ANYWHERE_SAVE].value != 0,
+        .max_growth = settings[ID_MAX_GROWTH].value != 0,
+        .max_loot = settings[ID_MAX_LOOT].value != 0,
+        .windowed = settings[ID_WINDOWED].value != 0,
+        .cursor_lock = settings[ID_CURSOR_LOCK].value != 0,
+        .widescreen = settings[ID_WIDESCREEN].value != 0,
+        .scale2 = settings[ID_SCALE].value,
+        .experience_multiplier = settings[ID_EXP_MULTIPLIER].value,
+        .money_multiplier = settings[ID_MONEY_MULTIPLIER].value,
+        .dynamic_encounter_rate = settings[ID_DYNAMIC_ENCOUNTER_RATE].value != 0,
     };
-    SaveOptions(&options);
 
     PROCESS_INFORMATION process_info;
     if (!CreateGameProcess(path, &process_info)) {
@@ -693,211 +605,18 @@ static void Launch(HWND owner) {
                  _TRUNCATE,
                  L"已向 PID %lu 写入所选补丁并启动游戏。原始 RPG.exe 未被修改。",
                  (unsigned long)process_info.dwProcessId);
-    SetStatus(status);
+    LauncherSetStatus(status);
     CloseHandle(process_info.hThread);
     CloseHandle(process_info.hProcess);
 }
 
-static void UpdateWindowedControls(HWND window) {
-    EnableWindow(g_scale_combo, IsChecked(ID_WINDOWED));
-    EnableWindow(GetDlgItem(window, ID_CURSOR_LOCK), IsChecked(ID_WINDOWED));
-    EnableWindow(GetDlgItem(window, ID_WIDESCREEN), IsChecked(ID_WINDOWED));
-    InvalidateRect(window, NULL, TRUE);
-}
-
-static HWND AddControl(HWND parent,
-                       const wchar_t *class_name,
-                       const wchar_t *text,
-                       DWORD style,
-                       int x,
-                       int y,
-                       int width,
-                       int height,
-                       int id) {
-    HWND control = CreateWindowExW(0,
-                                   class_name,
-                                   text,
-                                   WS_CHILD | WS_VISIBLE | style,
-                                   x,
-                                   y,
-                                   width,
-                                   height,
-                                   parent,
-                                   (HMENU)(INT_PTR)id,
-                                   g_instance,
-                                   NULL);
-    SendMessageW(control, WM_SETFONT, (WPARAM)g_font, TRUE);
-    return control;
-}
-
-static void CreateControls(HWND window) {
-    g_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    AddControl(window, L"STATIC", L"运行时补丁", SS_LEFT, 18, 18, 140, 22, -1);
-    AddControl(window, L"BUTTON", L"免 CD", BS_AUTOCHECKBOX, 18, 44, 260, 24, ID_NO_CD);
-    AddControl(window, L"BUTTON", L"修复「冥狱杀阵」可被习得", BS_AUTOCHECKBOX, 18, 70, 300, 24, ID_MINGYU_FIX);
-    AddControl(window, L"BUTTON", L"修复菜单后的抗性显示与实际值不一致", BS_AUTOCHECKBOX, 18, 96, 320, 24, ID_RESISTANCE_FIX);
-    AddControl(window, L"BUTTON", L"随时存档", BS_AUTOCHECKBOX, 18, 122, 260, 24, ID_ANYWHERE_SAVE);
-    AddControl(window, L"BUTTON", L"最大成长", BS_AUTOCHECKBOX, 18, 148, 260, 24, ID_MAX_GROWTH);
-    AddControl(window, L"BUTTON", L"最大掉宝", BS_AUTOCHECKBOX, 18, 174, 260, 24, ID_MAX_LOOT);
-    AddControl(window, L"BUTTON", L"动态调整遇敌率（Ctrl+F10/F11/F12）", BS_AUTOCHECKBOX, 18, 204, 300, 24, ID_DYNAMIC_ENCOUNTER_RATE);
-    AddControl(window, L"STATIC", L"经验倍率", SS_LEFT, 18, 232, 80, 22, -1);
-    g_experience_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 92, 230, 44, 20, ID_EXP_MULTIPLIER);
-    HWND experience_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 136, 230, 18, 20, ID_EXP_MULTIPLIER_SPIN);
-    SendMessageW(experience_spin, UDM_SETBUDDY, (WPARAM)g_experience_multiplier_edit, 0);
-    SendMessageW(experience_spin, UDM_SETRANGE32, 1, 10);
-    SetDlgItemInt(window, ID_EXP_MULTIPLIER, LoadConfigMultiplier(L"ExperienceMultiplier"), FALSE);
-    AddControl(window, L"STATIC", L"金钱倍率", SS_LEFT, 170, 232, 80, 22, -1);
-    g_money_multiplier_edit = AddControl(window, L"EDIT", L"", ES_NUMBER | ES_AUTOHSCROLL | WS_BORDER, 244, 230, 44, 20, ID_MONEY_MULTIPLIER);
-    HWND money_spin = AddControl(window, UPDOWN_CLASSW, L"", UDS_SETBUDDYINT | UDS_ALIGNRIGHT | UDS_ARROWKEYS, 288, 230, 18, 20, ID_MONEY_MULTIPLIER_SPIN);
-    SendMessageW(money_spin, UDM_SETBUDDY, (WPARAM)g_money_multiplier_edit, 0);
-    SendMessageW(money_spin, UDM_SETRANGE32, 1, 10);
-    SetDlgItemInt(window, ID_MONEY_MULTIPLIER, LoadConfigMultiplier(L"MoneyMultiplier"), FALSE);
-
-    AddControl(window, L"STATIC", L"显示模式", SS_LEFT, 360, 18, 140, 22, -1);
-    AddControl(window, L"BUTTON", L"窗口模式（修正鼠标坐标）", BS_AUTOCHECKBOX, 360, 44, 220, 24, ID_WINDOWED);
-    AddControl(window, L"BUTTON", L"锁定鼠标在窗口内", BS_AUTOCHECKBOX, 360, 70, 220, 24, ID_CURSOR_LOCK);
-    AddControl(window, L"BUTTON", L"宽屏地图（864 × 480）", BS_AUTOCHECKBOX, 360, 130, 220, 24, ID_WIDESCREEN);
-    AddControl(window, L"STATIC", L"窗口倍率", SS_LEFT, 360, 104, 90, 22, -1);
-    g_scale_combo = AddControl(window, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL, 430, 100, 140, 140, ID_SCALE);
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1×（640 × 480）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"1.5×（960 × 720）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"2×（1280 × 960）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"2.5×（1600 × 1200）");
-    SendMessageW(g_scale_combo, CB_ADDSTRING, 0, (LPARAM)L"3×（1920 × 1440）");
-    SendMessageW(g_scale_combo, CB_SETCURSEL, (WPARAM)ScaleValueToIndex(LoadConfigScale()), 0);
-    EnableWindow(g_scale_combo, FALSE);
-
-    AddControl(window, L"STATIC",
-               L"启动时创建已挂起的进程，仅向该进程内存写入补丁。",
-               SS_LEFT,
-               18,
-                262,
-               552,
-               22,
-               -1);
-    AddControl(window, L"BUTTON", L"应用补丁并启动游戏", BS_DEFPUSHBUTTON, 360, 292, 210, 32, ID_LAUNCH);
-    g_status = AddControl(window, L"STATIC", L"等待启动。", SS_LEFT, 18, 300, 330, 22, ID_STATUS);
-
-    CheckDlgButton(window, ID_NO_CD, LoadConfigBool(L"NoCd", true) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_MINGYU_FIX, LoadConfigBool(L"MingyuFix", true) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_RESISTANCE_FIX, LoadConfigBool(L"ResistanceFix", true) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_ANYWHERE_SAVE, LoadConfigBool(L"AnywhereSave", true) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_MAX_GROWTH, LoadConfigBool(L"MaxGrowth", false) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_MAX_LOOT, LoadConfigBool(L"MaxLoot", false) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_DYNAMIC_ENCOUNTER_RATE, LoadConfigBool(L"DynamicEncounterRate", false) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_WINDOWED, LoadConfigDisplayBool(L"Windowed", false) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_CURSOR_LOCK, LoadConfigDisplayBool(L"CursorLock", false) ? BST_CHECKED : BST_UNCHECKED);
-    CheckDlgButton(window, ID_WIDESCREEN, LoadConfigDisplayBool(L"Widescreen", false) ? BST_CHECKED : BST_UNCHECKED);
-    UpdateWindowedControls(window);
-}
-
-static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
-    switch (message) {
-        case WM_CREATE:
-            g_main_window = window;
-            CreateControls(window);
-            return 0;
-        case WM_COMMAND:
-            if (HIWORD(w_param) == BN_CLICKED) {
-                switch (LOWORD(w_param)) {
-                    case ID_WINDOWED:
-                        UpdateWindowedControls(window);
-                        return 0;
-                    case ID_LAUNCH:
-                        Launch(window);
-                        return 0;
-                    default:
-                        break;
-                }
-            }
-            return 0;
-        case WM_CTLCOLORSTATIC: {
-            HDC dc = (HDC)w_param;
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
-            return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
-        }
-        case WM_CTLCOLOREDIT:
-        case WM_CTLCOLORLISTBOX: {
-            HDC dc = (HDC)w_param;
-            SetBkMode(dc, OPAQUE);
-            SetBkColor(dc, GetSysColor(COLOR_WINDOW));
-            SetTextColor(dc, GetSysColor(COLOR_WINDOWTEXT));
-            return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
-        }
-        case WM_CTLCOLORBTN: {
-            HDC dc = (HDC)w_param;
-            SetBkMode(dc, TRANSPARENT);
-            SetTextColor(dc, GetSysColor(COLOR_BTNTEXT));
-            return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
-        }
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-        default:
-            return DefWindowProcW(window, message, w_param, l_param);
-    }
-}
-
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous_instance, PWSTR command_line, int show_command) {
-    (void)previous_instance;
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command_line, int show) {
+    (void)previous;
     (void)command_line;
-    g_instance = instance;
-
-    INITCOMMONCONTROLSEX common_controls;
-    common_controls.dwSize = sizeof(common_controls);
-    common_controls.dwICC = ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES;
-    InitCommonControlsEx(&common_controls);
-
-    WNDCLASSW window_class;
-    ZeroMemory(&window_class, sizeof(window_class));
-    window_class.hInstance = instance;
-    window_class.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    /* Keep the parent and static-control backgrounds on the same system
-       color.  Edit/list controls are explicitly painted white in
-       WM_CTLCOLOREDIT/WM_CTLCOLORLISTBOX above. */
-    window_class.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    window_class.lpszClassName = L"CastlePatchesWindow";
-    window_class.lpfnWndProc = WindowProcedure;
-
-    if (RegisterClassW(&window_class) == 0) {
-        return 1;
-    }
-
-    HWND window = CreateWindowExW(WS_EX_APPWINDOW,
-                                   window_class.lpszClassName,
-                                   L"《天地劫序传 幽城幻剑录》补丁工具",
-                                   WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                                   0,
-                                   0,
-                                   604,
-                                   372,
-                                  NULL,
-                                  NULL,
-                                  instance,
-                                  NULL);
-    if (window == NULL) {
-        return 1;
-    }
-    g_main_window = window;
-
-    RECT work_area = {0};
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
-    RECT window_rect = {0};
-    GetWindowRect(window, &window_rect);
-    int width = window_rect.right - window_rect.left;
-    int height = window_rect.bottom - window_rect.top;
-    int x = work_area.left + ((work_area.right - work_area.left) - width) / 2;
-    int y = work_area.top + ((work_area.bottom - work_area.top) - height) / 2;
-    SetWindowPos(window, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-
-    ShowWindow(window, show_command);
-    UpdateWindow(window);
-
-    MSG message;
-    while (GetMessageW(&message, NULL, 0, 0) > 0) {
-        TranslateMessage(&message);
-        DispatchMessageW(&message);
-    }
-    return (int)message.wParam;
+    static const LauncherSpec launcher = {
+        L"CastlePatchesWindow", L"《天地劫序传 幽城幻剑录》补丁工具", L"幽城幻剑录",
+        L"CastlePatches  /  v" LAUNCHER_VERSION, pages, _countof(pages), settings, _countof(settings),
+        GetConfigPath, Launch,
+    };
+    return LauncherRun(instance, show, &launcher);
 }

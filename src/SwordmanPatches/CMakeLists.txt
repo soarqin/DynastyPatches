@@ -75,7 +75,7 @@ if(BUILD_TESTING AND MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
     add_test(NAME SwordmanSavePatchTest COMMAND SwordmanSavePatchTest)
 endif()
 
-add_executable(SwordmanPatches WIN32 main.c file_identity.c SwordmanPatches.rc
+add_executable(SwordmanPatches WIN32 main.c ../launcher/launcher_ui.c file_identity.c SwordmanPatches.rc
                "${CMAKE_CURRENT_BINARY_DIR}/SwordmanPatchesVersion.rc" "${LOADER_C}")
 add_dependencies(SwordmanPatches SwordmanRuntime)
 add_custom_command(TARGET SwordmanPatches POST_BUILD
@@ -86,7 +86,8 @@ set(SWORDMANPATCHES_FILE_DESCRIPTION "Swordman Patches Launcher")
 set(SWORDMANPATCHES_INTERNAL_NAME "SwordmanPatches")
 set(SWORDMANPATCHES_ORIGINAL_FILENAME "SwordmanPatches.exe")
 configure_file(SwordmanPatchesVersion.rc.in SwordmanPatchesVersion.rc @ONLY)
-target_compile_definitions(SwordmanPatches PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_definitions(SwordmanPatches PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+    "LAUNCHER_VERSION=L\"${PROJECT_VERSION}\"")
 target_include_directories(SwordmanPatches PRIVATE "${LOADER_DIR}")
 target_link_libraries(SwordmanPatches PRIVATE comdlg32 comctl32 bcrypt)
 if(MSVC)
