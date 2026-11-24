@@ -1,5 +1,5 @@
-include(CastlePatchesVersion)
-project(SwordmanPatches VERSION ${CASTLEPATCHES_VERSION} LANGUAGES C)
+include(SwordmanPatchesVersion)
+project(SwordmanPatches VERSION ${SWORDMANPATCHES_VERSION} LANGUAGES C)
 
 find_program(NASM_EXECUTABLE NAMES nasm REQUIRED)
 set(LOADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/loader_stub")
@@ -39,7 +39,8 @@ add_custom_command(
             runtime/gameplay_hook_addresses.inc
             file_identity.c runtime/display.c runtime/display_hooks.asm runtime/runtime_internal.h
              runtime/gameplay_addresses.h runtime/display_addresses.h swordman_addresses.h swordman.h
-            runtime/SwordmanRuntime.def runtime/CMakeLists.txt
+            runtime/SwordmanRuntime.def runtime/CMakeLists.txt SwordmanPatchesVersion.rc.in
+            "${CMAKE_SOURCE_DIR}/cmake/SwordmanPatchesVersion.cmake"
     VERBATIM
 )
 add_custom_target(SwordmanRuntime ALL DEPENDS "${RUNTIME_X86_DLL}")

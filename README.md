@@ -51,7 +51,9 @@ cmake --build build-x64 --config Release
 
 CastlePatches 的版本由 `cmake/CastlePatchesVersion.cmake` 统一管理，并写入启动器和运行时 DLL 的 Windows 版本资源。变更记录位于 `src/CastlePatches/CHANGELOG.md`。
 
-推送格式为 `castle-v<版本号>` 的标签会触发 CastlePatches 的发布工作流。工作流仅构建 Win32 版本，并将 `CastlePatches.exe`、`CastleRuntime.dll`、`README.md`、`LICENSE` 和该工具的 `CHANGELOG.md` 打包为 ZIP 附件。其他工具应分别维护自己的变更日志和发布工作流，并使用独立的标签前缀。
+推送格式为 `castle-v<版本号>` 的标签会触发 CastlePatches 的发布工作流。工作流仅构建 Win32 版本，并将 `CastlePatches.exe`、`CastleRuntime.dll`、`README.md`、`LICENSE` 和该工具的 `CHANGELOG.md` 打包为 ZIP 附件。
+
+SwordmanPatches 的版本由 `cmake/SwordmanPatchesVersion.cmake` 管理，变更记录位于 `src/SwordmanPatches/CHANGELOG.md`。推送 `swordman-v<版本号>` 标签会触发发布工作流。工作流校验标签版本，从变更日志提取发行说明，并生成 `SwordmanPatches-<版本号>-win32.zip`，其中包含 `SwordmanPatches.exe`、`SwordmanRuntime.dll`、`README.md`、`LICENSE` 和 `CHANGELOG.md`。
 
 ## 使用说明
 

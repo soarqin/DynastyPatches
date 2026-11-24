@@ -1,0 +1,79 @@
+name: Release SwordmanPatches
+
+on:
+  push:
+    tags:
+      - "swordman-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Ensure NASM
+        shell: pwsh
+        run: |
+          if (-not (Get-Command nasm -ErrorAction SilentlyContinue)) {
+            choco install nasm -y
+          }
+          nasm -v
+
+      - name: Validate release tag
+        id: release_info
+        shell: pwsh
+        run: |
+          $tagVersion = $env:GITHUB_REF_NAME.Substring("swordman-v".Length)
+          $versionFile = Get-Content "cmake/SwordmanPatchesVersion.cmake" -Raw
+          if ($versionFile -notmatch 'set\(SWORDMANPATCHES_VERSION "([^"]+)"\)') {
+            throw "Unable to read the SwordmanPatches version."
+          }
+          if ($tagVersion -ne $Matches[1]) {
+            throw "Tag version $tagVersion does not match SwordmanPatches version $($Matches[1])."
+          }
+          "version=$tagVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Configure Win32 release build
+        run: cmake -S . -B build-win32 -G "Visual Studio 18 2026" -A Win32
+
+      - name: Build Win32 release
+        run: cmake --build build-win32 --config Release --target SwordmanPatches --parallel
+
+      - name: Extract release notes
+        shell: pwsh
+        run: |
+          $version = "${{ steps.release_info.outputs.version }}"
+          $escapedVersion = [regex]::Escape($version)
+          $changelog = Get-Content "src/SwordmanPatches/CHANGELOG.md" -Raw
+          $match = [regex]::Match($changelog, "(?ms)^## \[$escapedVersion\][^\r\n]*\r?\n(?<notes>.*?)(?=^## |^\[[^\]]+\]:|\z)")
+          if (-not $match.Success) {
+            throw "Unable to find release notes for version $version."
+          }
+          Set-Content -Path "release-notes.md" -Value $match.Groups["notes"].Value.Trim() -NoNewline
+
+      - name: Create release archive
+        shell: pwsh
+        run: |
+          $version = "${{ steps.release_info.outputs.version }}"
+          $packageName = "SwordmanPatches-$version-win32"
+          $staging = Join-Path $env:RUNNER_TEMP $packageName
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          Copy-Item "build-win32/bin/Release/SwordmanPatches.exe" $staging
+          Copy-Item "build-win32/bin/Release/SwordmanRuntime.dll" $staging
+          Copy-Item "README.md" $staging
+          Copy-Item "LICENSE" $staging
+          Copy-Item "src/SwordmanPatches/CHANGELOG.md" $staging
+          Compress-Archive -Path $staging -DestinationPath "$env:GITHUB_WORKSPACE/$packageName.zip"
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 神魔至尊传 补丁工具 ${{ steps.release_info.outputs.version }}
+          body_path: release-notes.md
+          files: SwordmanPatches-${{ steps.release_info.outputs.version }}-win32.zip
+          fail_on_unmatched_files: true
