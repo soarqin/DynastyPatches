@@ -409,6 +409,54 @@ static void TestOriginalDestinations(void) {
     CheckGrayFrame(true, false);
 }
 
+typedef struct TestCursorInput {
+    uint8_t padding[UI_CURSOR_POSITION_OFFSET];
+    POINT position;
+    POINT drawn;
+    unsigned draws;
+} TestCursorInput;
+
+static void __fastcall TestDrawCursor(void *manager) {
+    TestCursorInput *input = manager;
+    input->drawn = input->position;
+    ++input->draws;
+}
+
+static void CheckCursorDraw(TestCursorInput *input, LONG x, LONG y, LONG drawn_x) {
+    input->position = (POINT){x, y};
+    input->draws = 0;
+    RuntimeUiCursorDraw(input, NULL);
+    REQUIRE(input->draws == (drawn_x >= 0 ? 1u : 0u));
+    if (input->draws != 0) REQUIRE(input->drawn.x == drawn_x && input->drawn.y == y);
+    REQUIRE(input->position.x == x && input->position.y == y);
+}
+
+static void TestUiCursorBounds(void) {
+    TestCursorInput input = {0};
+    g_original_ui_cursor_draw = TestDrawCursor;
+    g_widescreen = true;
+    g_map_frame = 1;
+    g_cursor_map_active = 0;
+    *(uintptr_t *)ORDINARY_MENU_OBJECT_ADDRESS = 0;
+    /* The startup crash entered this shift with the fixed viewport's sentinel. */
+    CheckCursorDraw(&input, -1, -1, -1);
+    CheckCursorDraw(&input, 0, 0, SIDE);
+    CheckCursorDraw(&input, GAME_CLIENT_WIDTH - 1, GAME_CLIENT_HEIGHT - 1,
+                    GAME_CLIENT_WIDTH - 1 + SIDE);
+    CheckCursorDraw(&input, GAME_CLIENT_WIDTH, 0, -1);
+
+    g_cursor_map_active = 1;
+    CheckCursorDraw(&input, WIDESCREEN_CLIENT_WIDTH - 1, 0, WIDESCREEN_CLIENT_WIDTH - 1);
+    CheckCursorDraw(&input, WIDESCREEN_CLIENT_WIDTH, 0, -1);
+    CheckCursorDraw(&input, 100, -1, -1);
+    CheckCursorDraw(&input, 100, GAME_CLIENT_HEIGHT, -1);
+
+    g_widescreen = false;
+    g_map_frame = g_cursor_map_active = 0;
+    CheckCursorDraw(&input, -1, 0, -1);
+    CheckCursorDraw(&input, 100, 100, 100);
+}
+
 int main(void) {
     TestSystemMenuReturn(true, false);
     TestSystemMenuReturn(true, true);
@@ -417,7 +465,8 @@ int main(void) {
     TestOrdinaryMenuReturn(false);
     TestOrdinaryMenuReturn(true);
     TestOriginalDestinations();
-    puts("Castle runtime menu transition tests passed; no game code executed");
+    TestUiCursorBounds();
+    puts("Castle runtime menu transition and cursor tests passed; no game code executed");
     return 0;
 }
 

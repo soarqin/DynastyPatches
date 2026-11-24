@@ -75,6 +75,7 @@
 #define CURSOR_UPDATE_HOOK_ADDRESS ((uintptr_t)0x00408830u)
 #define CURSOR_UPDATE_GET_CURSOR_RETURN_ADDRESS ((uintptr_t)0x0040883Bu)
 #define UI_CURSOR_DRAW_HOOK_ADDRESS ((uintptr_t)0x0043E1B0u)
+#define UI_CURSOR_POSITION_OFFSET 0x238u
 
 /* Renderer layout verified with Python idapro against the supported image. */
 #define RENDERER_BACK_SURFACE_OFFSET 0x08u

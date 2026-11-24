@@ -842,12 +842,19 @@ static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
    the switch to a fullscreen UI is in progress. */
 static void __fastcall RuntimeUiCursorDraw(void *input_manager, void *unused_edx) {
     (void)unused_edx;
-    bool shift = InterlockedCompareExchange(&g_map_frame, 0, 0) != 0 && !IsCursorMapActive() &&
+    POINT *cursor = (POINT *)((uint8_t *)input_manager + UI_CURSOR_POSITION_OFFSET);
+    LONG x = cursor->x;
+    bool map_coordinates = g_widescreen && IsCursorMapActive();
+    LONG width = map_coordinates ? WIDESCREEN_CLIENT_WIDTH : GAME_CLIENT_WIDTH;
+    /* The fixed viewport's (-1, -1) sentinel can send the RLE blitter above its buffer. */
+    if (x < 0 || x >= width || cursor->y < 0 || cursor->y >= GAME_CLIENT_HEIGHT) return;
+
+    bool shift = g_widescreen && !map_coordinates &&
+        InterlockedCompareExchange(&g_map_frame, 0, 0) != 0 &&
         *(const uintptr_t *)ORDINARY_MENU_OBJECT_ADDRESS == 0;
-    int32_t *cache_x = (int32_t *)((uint8_t *)input_manager + 0x238u);
-    if (shift) *cache_x += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+    if (shift) cursor->x = x + (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
     if (g_original_ui_cursor_draw != NULL) g_original_ui_cursor_draw(input_manager);
-    if (shift) *cache_x -= (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+    if (shift) cursor->x = x;
 }
 
 static bool InstallTransitionHooks(void) {
@@ -927,9 +934,6 @@ static bool InstallWidescreenHooks(void) {
     static const uint8_t bink_frame_expected[] = {
         0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x08, 0x84, 0xC0,
     };
-    static const uint8_t ui_cursor_draw_expected[] = {
-        0x8A, 0x81, 0x48, 0x02, 0x00, 0x00, 0x84, 0xC0, 0x74, 0x30,
-    };
     static const uint8_t map_ui_sprite_expected[] = {
         0x51, 0x56, 0x8B, 0xF1, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00, 0x00,
     };
@@ -978,9 +982,6 @@ static bool InstallWidescreenHooks(void) {
         memcmp((const void *)GLYPH_BLIT_HOOK_ADDRESS,
                glyph_blit_expected,
                sizeof(glyph_blit_expected)) != 0 ||
-        memcmp((const void *)UI_CURSOR_DRAW_HOOK_ADDRESS,
-               ui_cursor_draw_expected,
-               sizeof(ui_cursor_draw_expected)) != 0 ||
         memcmp((const void *)MAP_CAMERA_LEFT_ADDRESS,
                camera_left_expected,
                sizeof(camera_left_expected)) != 0 ||
@@ -1059,11 +1060,6 @@ static bool InstallWidescreenHooks(void) {
                          sizeof(glyph_blit_expected),
                          HOOK_ADDRESS(GlyphBlitHook),
                          &g_original_glyph_blit) ||
-         !InstallGameHook(UI_CURSOR_DRAW_HOOK_ADDRESS,
-                          ui_cursor_draw_expected,
-                          sizeof(ui_cursor_draw_expected),
-                          HOOK_ADDRESS(RuntimeUiCursorDraw),
-                          (LPVOID *)&g_original_ui_cursor_draw) ||
          !InstallGameHook(BINK_FRAME_FUNCTION_ADDRESS,
                           bink_frame_expected,
                           sizeof(bink_frame_expected),
@@ -1098,6 +1094,9 @@ static bool InstallWindowedHooks(void) {
     static const uint8_t bink_pitch_expected[] = {0x8B, 0x49, 0x40};
     static const uint8_t bink_pitch_replacement[] = {0x8B, 0x49, 0x20};
     static const uint8_t bink_call_expected[] = {0xE8, 0x9C, 0x46, 0x00, 0x00};
+    static const uint8_t ui_cursor_draw_expected[] = {
+        0x8A, 0x81, 0x48, 0x02, 0x00, 0x00, 0x84, 0xC0, 0x74, 0x30,
+    };
 
     if (!ApplyCodePatch(WINDOWED_STYLE_ADDRESS, windowed_style_expected,
                         windowed_style_replacement, sizeof(windowed_style_expected)) ||
@@ -1115,7 +1114,10 @@ static bool InstallWindowedHooks(void) {
                          sizeof(surface_format_expected), HOOK_ADDRESS(SurfaceFormatHook),
                          &g_original_surface_format) ||
         !InstallGameHook(BINK_UNLOCK_CALL_ADDRESS, bink_call_expected,
-                         sizeof(bink_call_expected), HOOK_ADDRESS(BinkPresentCallHook), NULL)) {
+                         sizeof(bink_call_expected), HOOK_ADDRESS(BinkPresentCallHook), NULL) ||
+        !InstallGameHook(UI_CURSOR_DRAW_HOOK_ADDRESS, ui_cursor_draw_expected,
+                         sizeof(ui_cursor_draw_expected), HOOK_ADDRESS(RuntimeUiCursorDraw),
+                         (LPVOID *)&g_original_ui_cursor_draw)) {
         return false;
     }
     return true;
