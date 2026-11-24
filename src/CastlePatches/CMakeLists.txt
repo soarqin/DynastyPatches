@@ -88,6 +88,8 @@ add_custom_command(
             runtime/runtime_hook_addresses.inc
             runtime/CastleRuntime.def
             runtime/CMakeLists.txt
+            CastlePatchesVersion.rc.in
+            "${CMAKE_SOURCE_DIR}/cmake/CastlePatchesVersion.cmake"
             "${CMAKE_SOURCE_DIR}/cmake/Dependencies.cmake"
     VERBATIM
 )
