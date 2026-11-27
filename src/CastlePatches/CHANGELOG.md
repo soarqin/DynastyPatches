@@ -4,6 +4,18 @@
 
 格式遵循 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，并采用[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-28
+
+### 新增
+
+- 窗口倍率新增 `2.25×`。普通模式的客户区为 `1440 × 1080`，宽屏地图模式为 `1920 × 1080`。
+
+### 修复
+
+- 宽屏客户区按缩放后的高度计算 `16:9` 宽度，再向上对齐到 16 像素的倍数。鼠标坐标按实际客户区尺寸换算。
+- 修复窗口模式下的鼠标回弹，保留游戏原版指针。
+- 修复宽屏战斗画面出现碎片的问题，并校正低帧率下的游戏逻辑速度。
+
 ## [0.2.0] - 2026-11-25
 
 ### 新增
@@ -32,5 +44,6 @@
 - 提供 Castle 游戏补丁启动器，以及配套的 32 位运行时模块。
 - 支持窗口模式、鼠标锁定、战斗结算倍率等运行时补丁。
 
+[0.2.1]: https://github.com/soarqin/DynastyPatches/compare/castle-v0.2.0...castle-v0.2.1
 [0.2.0]: https://github.com/soarqin/DynastyPatches/compare/castle-v0.1.0...castle-v0.2.0
 [0.1.0]: https://github.com/soarqin/DynastyPatches/releases/tag/castle-v0.1.0
