@@ -8,6 +8,7 @@ static struct {
     int32_t effect_state;
     int16_t brightness, fade_in, fade_out;
     uint16_t color;
+    uint32_t timer_interval, timer_divisor;
 } g_test_globals;
 
 /* Only rebind globals; the runtime hook bodies and x86 object fields are real. */
@@ -22,6 +23,8 @@ static struct {
 #undef MAP_EFFECT_FADE_IN_TARGET_ADDRESS
 #undef MAP_EFFECT_FADE_OUT_TARGET_ADDRESS
 #undef MAP_EFFECT_COLOR_ADDRESS
+#undef TIMER_INTERVAL_ADDRESS
+#undef TIMER_PRESENT_DIVISOR_ADDRESS
 #define RENDERER_GLOBAL_ADDRESS ((uintptr_t)&g_test_globals.renderer)
 #define CURRENT_MAP_SCENE_ADDRESS ((uintptr_t)&g_test_globals.scene)
 #define GAME_STATE_OBJECT_ADDRESS ((uintptr_t)&g_test_globals.state)
@@ -33,14 +36,29 @@ static struct {
 #define MAP_EFFECT_FADE_IN_TARGET_ADDRESS ((uintptr_t)&g_test_globals.fade_in)
 #define MAP_EFFECT_FADE_OUT_TARGET_ADDRESS ((uintptr_t)&g_test_globals.fade_out)
 #define MAP_EFFECT_COLOR_ADDRESS ((uintptr_t)&g_test_globals.color)
+#define TIMER_INTERVAL_ADDRESS ((uintptr_t)&g_test_globals.timer_interval)
+#define TIMER_PRESENT_DIVISOR_ADDRESS ((uintptr_t)&g_test_globals.timer_divisor)
 
 static DWORD g_test_tick;
+static int64_t g_test_counter;
 static DWORD WINAPI TestTickCount(void) { return g_test_tick; }
+static BOOL WINAPI TestPerformanceCounter(LARGE_INTEGER *counter) {
+    counter->QuadPart = g_test_counter;
+    return TRUE;
+}
+static BOOL WINAPI TestPerformanceFrequency(LARGE_INTEGER *frequency) {
+    frequency->QuadPart = 1000;
+    return TRUE;
+}
 #define GetTickCount TestTickCount
+#define QueryPerformanceCounter TestPerformanceCounter
+#define QueryPerformanceFrequency TestPerformanceFrequency
 #define DllMain CastleTestDllMain
 #include "../runtime/runtime_dll.c"
 #undef DllMain
 #undef GetTickCount
+#undef QueryPerformanceCounter
+#undef QueryPerformanceFrequency
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -193,6 +211,7 @@ static void Setup(bool rgb565) {
     memset(g_test_frames, 0, sizeof(g_test_frames));
     g_test_effect_calls = g_test_resumes = g_test_releases = g_test_loads = 0;
     g_test_tick = 1000;
+    g_logic_updated = false;
     g_map_frame = g_map_frame_suppressed = g_frame_upload_prepared = 0;
     g_map_active = g_cursor_map_active = g_bink_frame = 0;
     g_suppressed_ui_sprite = 0;
@@ -457,6 +476,54 @@ static void TestUiCursorBounds(void) {
     CheckCursorDraw(&input, 100, 100, 100);
 }
 
+static void TestBattleCapture(void) {
+    Setup(true);
+    MarkMapFrame((uintptr_t)g_test_scene);
+    PrepareWidescreenFrame();
+    for (int wide_map = 1; wide_map >= 0; --wide_map) {
+        int32_t stride = GAME_CLIENT_WIDTH + 2 * BORDER_X;
+        int32_t x = BORDER_X;
+        AdjustBattleCapture(&stride, &x);
+        REQUIRE(stride == PITCH && x == BORDER_X + wide_map * SIDE);
+        /* Match the game's snapshot copy across every row, including the bottom. */
+        for (size_t row = 0; row < GAME_CLIENT_HEIGHT; ++row) {
+            size_t offset = (row + BORDER_Y) * (size_t)stride + (size_t)x;
+            const uint8_t *source = (const uint8_t *)g_test_map + offset * sizeof(uint16_t);
+            REQUIRE(memcmp(source, &g_test_original[row + BORDER_Y][BORDER_X + wide_map * SIDE],
+                           GAME_CLIENT_WIDTH * sizeof(uint16_t)) == 0);
+        }
+        g_test_scene[MAP_SCENE_RENDER_SUPPRESSED_OFFSET] = 1;
+        PrepareWidescreenFrame();
+    }
+}
+
+static void TestLogicPacing(void) {
+    const uint32_t stopped = 0, running = 1;
+    const int render_periods[] = {20, 25, 40, 60};
+    for (size_t i = 0; i < _countof(render_periods); ++i) {
+        g_test_globals.timer_interval = 10;
+        g_test_globals.timer_divisor = 5;
+        g_test_counter = 0;
+        PrepareFrameTimer(&stopped);
+        REQUIRE(g_test_globals.timer_interval == 4);
+        PrepareFrameTimer(&running);
+        REQUIRE(g_test_globals.timer_interval == 4);
+
+        int updates = 0;
+        int step = render_periods[i];
+        for (g_test_counter = step; g_test_counter <= 2000; g_test_counter += step) {
+            updates += ShouldRunGameLogic();
+        }
+        /* Even at 25 presents/sec, retain 20 updates/sec. If work takes over
+           50ms, update on each available frame without running extra ticks. */
+        REQUIRE(updates == (step <= 50 ? 40 : 2000 / step));
+    }
+    g_test_counter += 2000;
+    REQUIRE(ShouldRunGameLogic());
+    g_test_counter += 20;
+    REQUIRE(!ShouldRunGameLogic());
+}
+
 int main(void) {
     TestSystemMenuReturn(true, false);
     TestSystemMenuReturn(true, true);
@@ -466,7 +533,9 @@ int main(void) {
     TestOrdinaryMenuReturn(true);
     TestOriginalDestinations();
     TestUiCursorBounds();
-    puts("Castle runtime menu transition and cursor tests passed; no game code executed");
+    TestBattleCapture();
+    TestLogicPacing();
+    puts("Castle runtime transition, cursor, and pacing tests passed; no game code executed");
     return 0;
 }
 
@@ -476,6 +545,8 @@ TEST_ASM_STUB(SurfaceFormatHook)
 TEST_ASM_STUB(RendererWidthHook)
 TEST_ASM_STUB(MapRenderHook)
 TEST_ASM_STUB(MapBackdropCaptureHook)
+TEST_ASM_STUB(EncounterBattleCaptureHook)
+TEST_ASM_STUB(ScriptBattleCaptureHook)
 TEST_ASM_STUB(MapUiSpriteHook)
 TEST_ASM_STUB(DialogTextNameHook)
 TEST_ASM_STUB(DialogTextBodyHook)

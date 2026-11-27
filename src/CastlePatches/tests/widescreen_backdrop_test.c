@@ -214,7 +214,8 @@ static void TestFrozenTransition(uintptr_t renderer) {
     SetPointer(RENDERER_PIXELS_OFFSET, g_map);
     InvalidateMapBackdrop(MAP_SCENE);
     REQUIRE(!DrawTransitionBackdrop(renderer, 0));
-    REQUIRE(CaptureTransitionBackdrop(renderer, MAP_SCENE));
+    CaptureMapBackdrop(renderer, MAP_SCENE);
+    REQUIRE(HasTransitionBackdrop(renderer, MAP_SCENE));
     ResetMapBackdrop();
     REQUIRE(!HasTransitionBackdrop(renderer, MAP_SCENE));
     REQUIRE(!DrawTransitionBackdrop(renderer, 0));

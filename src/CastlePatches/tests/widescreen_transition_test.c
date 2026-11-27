@@ -34,10 +34,11 @@ static void TestFrameLayout(void) {
     }
     CastleFrameLayout layout = {0};
     UpdateCastleFrameLayout(&layout, true, false, false, true);
-    UpdateCastleFrameLayout(&layout, false, false, false, true);
-    REQUIRE(layout.map_active && !layout.cursor_map_active);
-    UpdateCastleFrameLayout(&layout, false, false, false, true);
-    REQUIRE(layout.map_active);
+    for (int skipped = 0; skipped < 4; ++skipped) {
+        UpdateCastleFrameLayout(&layout, false, false, false, false);
+        REQUIRE(layout.map_active && !layout.cursor_map_active);
+    }
+    /* A real update can switch layouts even if it follows the map immediately. */
     UpdateCastleFrameLayout(&layout, false, false, false, true);
     REQUIRE(!layout.map_active);
 }

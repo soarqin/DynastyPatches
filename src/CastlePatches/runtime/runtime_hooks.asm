@@ -6,6 +6,7 @@ extern _ApplySurfaceFormat
 extern _ApplyWidescreenRendererWidth
 extern _MarkMapFrame
 extern _CaptureCurrentMapBackdrop
+extern _AdjustBattleCapture
 extern _MarkBinkFrame
 extern _OffsetMapUiSpriteX
 extern _ApplyEncounterInitialRate
@@ -15,6 +16,8 @@ extern _g_original_surface_format
 extern _g_original_renderer_width
 extern _g_original_map_render
 extern _g_original_map_backdrop_capture
+extern _g_original_encounter_battle_capture
+extern _g_original_script_battle_capture
 extern _g_original_map_ui_sprite
 extern _g_original_dialog_name
 extern _g_original_dialog_body
@@ -34,6 +37,8 @@ global _SurfaceFormatHook
 global _RendererWidthHook
 global _MapRenderHook
 global _MapBackdropCaptureHook
+global _EncounterBattleCaptureHook
+global _ScriptBattleCaptureHook
 global _MapUiSpriteHook
 global _DialogTextNameHook
 global _DialogTextBodyHook
@@ -84,6 +89,25 @@ _MapBackdropCaptureHook:
     popad
     popfd
     jmp [_g_original_map_backdrop_capture]
+
+_EncounterBattleCaptureHook:
+    call AdjustBattleCaptureArguments
+    jmp [_g_original_encounter_battle_capture]
+
+_ScriptBattleCaptureHook:
+    call AdjustBattleCaptureArguments
+    jmp [_g_original_script_battle_capture]
+
+AdjustBattleCaptureArguments:
+    ; The detour replaces the CALL, so the native arguments are directly
+    ; below the return address from this helper's CALL.
+    lea eax, [esp+4]    ; source stride in pixels
+    lea edx, [esp+10h]  ; source x
+    push edx
+    push eax
+    call _AdjustBattleCapture
+    add esp, 8
+    ret
 
 _MapUiSpriteHook:
     pushad
@@ -214,7 +238,9 @@ _EncounterRegenerationHook:
 
 _FramePacingTimerSetupHook:
     pushad
+    push ecx
     call _PrepareFrameTimer
+    add esp, 4
     popad
     jmp [_g_original_timer_setup]
 

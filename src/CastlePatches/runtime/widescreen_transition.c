@@ -3,26 +3,17 @@
 #include <string.h>
 
 void UpdateCastleFrameLayout(CastleFrameLayout *layout, bool map_frame, bool map_suppressed,
-                            bool ordinary_menu, bool frame_pacing) {
+                            bool ordinary_menu, bool logic_updated) {
     /* Skipped logic ticks retain the previous CPU pixels, including their layout. */
     layout->ordinary_menu_frame = ordinary_menu || (layout->ordinary_menu_frame && !map_frame);
     if (layout->ordinary_menu_frame) {
-        layout->map_frame_misses = 0;
         layout->map_active = false;
         layout->cursor_map_active = false;
     } else if (map_frame) {
-        layout->map_frame_misses = 0;
         layout->map_active = true;
         layout->cursor_map_active = true;
-    } else if (frame_pacing && layout->map_active && !map_suppressed) {
-        layout->cursor_map_active = false;
-        if (++layout->map_frame_misses >= 3) {
-            layout->map_frame_misses = 0;
-            layout->map_active = false;
-        }
     } else {
-        layout->map_frame_misses = 0;
-        layout->map_active = false;
+        if (logic_updated || map_suppressed) layout->map_active = false;
         layout->cursor_map_active = false;
     }
 }

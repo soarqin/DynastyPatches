@@ -30,11 +30,10 @@ typedef struct {
     bool ordinary_menu_frame;
     bool map_active;
     bool cursor_map_active;
-    uint32_t map_frame_misses;
 } CastleFrameLayout;
 
 void UpdateCastleFrameLayout(CastleFrameLayout *layout, bool map_frame, bool map_suppressed,
-                            bool ordinary_menu, bool frame_pacing);
+                            bool ordinary_menu, bool logic_updated);
 
 bool IsFixedUiCommand(uint32_t opcode);
 /* Only follow known straight-line commands; a branch or map load ends the search. */

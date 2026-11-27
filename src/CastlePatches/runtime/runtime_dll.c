@@ -41,6 +41,8 @@ void SurfaceFormatHook(void);
 void RendererWidthHook(void);
 void MapRenderHook(void);
 void MapBackdropCaptureHook(void);
+void EncounterBattleCaptureHook(void);
+void ScriptBattleCaptureHook(void);
 void MapUiSpriteHook(void);
 void DialogTextNameHook(void);
 void DialogTextBodyHook(void);
@@ -73,6 +75,8 @@ void *g_original_surface_format;
 void *g_original_renderer_width;
 void *g_original_map_render;
 void *g_original_map_backdrop_capture;
+void *g_original_encounter_battle_capture;
+void *g_original_script_battle_capture;
 void *g_original_map_ui_sprite;
 void *g_original_dialog_name;
 void *g_original_dialog_body;
@@ -118,6 +122,10 @@ static bool g_widescreen;
 static bool g_encounter_map_enabled;
 static bool g_frame_pacing;
 static uint32_t g_game_logic_tick;
+static int64_t g_native_timer_ticks;
+static int64_t g_render_timer_ticks;
+static int64_t g_next_logic_tick;
+static bool g_logic_updated;
 static LPTOP_LEVEL_EXCEPTION_FILTER g_previous_exception_filter;
 static wchar_t g_original_window_title[256];
 static WNDPROC g_original_window_proc;
@@ -466,15 +474,45 @@ static bool InstallFramePacingHooks(void) {
     return true;
 }
 
-void PrepareFrameTimer(void) {
-    volatile uint32_t *interval = (volatile uint32_t *)(uintptr_t)0x0046F6B8u;
-    uint32_t value = *interval;
-    *interval = value > 3u ? (value + 2u) / 3u : 1u;
+void PrepareFrameTimer(const uint32_t *timer) {
+    if (*timer != 0) return;
+
+    uint32_t *interval = (uint32_t *)TIMER_INTERVAL_ADDRESS;
+    uint32_t native_ms = *interval;
+    uint32_t render_ms = native_ms > 3u ? (native_ms + 2u) / 3u : 1u;
+    *interval = render_ms;
+
+    LARGE_INTEGER frequency, now;
+    g_game_logic_tick = 0;
+    g_logic_updated = false;
+    g_native_timer_ticks = 0;
+    if (QueryPerformanceFrequency(&frequency) && QueryPerformanceCounter(&now)) {
+        /* The game posts one frame per divisor multimedia timer callbacks. */
+        g_native_timer_ticks = frequency.QuadPart * native_ms / 1000;
+        g_render_timer_ticks = frequency.QuadPart * render_ms / 1000;
+        g_next_logic_tick = now.QuadPart +
+            g_native_timer_ticks * *(const uint32_t *)TIMER_PRESENT_DIVISOR_ADDRESS;
+    }
 }
 
 int ShouldRunGameLogic(void) {
-    g_game_logic_tick = (g_game_logic_tick + 1u) % 3u;
-    return g_game_logic_tick == 0u;
+    LARGE_INTEGER now;
+    uint32_t divisor = *(const uint32_t *)TIMER_PRESENT_DIVISOR_ADDRESS;
+    int64_t period = g_native_timer_ticks * divisor;
+    if (period > 0 && QueryPerformanceCounter(&now)) {
+        /* Allow a little timer jitter without waiting another whole render frame. */
+        int64_t slack = g_render_timer_ticks * divisor / 4;
+        g_logic_updated = now.QuadPart + slack >= g_next_logic_tick;
+        if (g_logic_updated) {
+            g_next_logic_tick += period;
+            /* A stall must not enqueue a burst of object updates on resume. */
+            if (g_next_logic_tick <= now.QuadPart) g_next_logic_tick = now.QuadPart + period;
+        }
+    } else {
+        g_game_logic_tick = (g_game_logic_tick + 1u) % 3u;
+        g_logic_updated = g_game_logic_tick == 0u;
+    }
+    return g_logic_updated;
 }
 
 static bool PatchEffectStride(uintptr_t address) {
@@ -517,6 +555,19 @@ void __cdecl MarkMapFrame(uintptr_t scene) {
 void __cdecl CaptureCurrentMapBackdrop(uintptr_t scene) {
     uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
     CaptureMapBackdrop(renderer, scene);
+}
+
+void __cdecl AdjustBattleCapture(int32_t *source_stride, int32_t *source_x) {
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    if (renderer == 0) return;
+
+    int32_t width = *(const int32_t *)(renderer + RENDERER_BUFFER_WIDTH_OFFSET);
+    int32_t x = *source_x;
+    /* The map is full-width. Fixed scenes already draw their center at source x. */
+    if (IsMapActive()) x += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+    if (x < 0 || width < GAME_CLIENT_WIDTH || x > width - GAME_CLIENT_WIDTH) return;
+    *source_stride = width;
+    *source_x = x;
 }
 
 static void __fastcall RuntimeMapSceneRelease(void *scene, void *unused_edx) {
@@ -776,7 +827,8 @@ static void PrepareWidescreenFrame(void) {
     uintptr_t scene = *(const uintptr_t *)CURRENT_MAP_SCENE_ADDRESS;
     /* A suspended map can leave the draw queue entirely, so there may be no
        MapRenderHook call to mark the first battle/menu frame as suppressed. */
-    if (scene != 0 && HasTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, scene) &&
+    if (!map_frame && !map_suppressed && scene != 0 &&
+        HasTransitionBackdrop(*(const uintptr_t *)RENDERER_GLOBAL_ADDRESS, scene) &&
         *(const uint8_t *)(scene + MAP_SCENE_RENDER_SUPPRESSED_OFFSET) != 0) {
         map_suppressed = true;
     }
@@ -787,7 +839,9 @@ static void PrepareWidescreenFrame(void) {
            through that upload; reverse the fade when a fresh map actually draws. */
         g_frame_layout.ordinary_menu_frame = true;
     }
-    UpdateCastleFrameLayout(&g_frame_layout, map_frame, map_suppressed, ordinary_menu, g_frame_pacing);
+    UpdateCastleFrameLayout(&g_frame_layout, map_frame, map_suppressed, ordinary_menu,
+                            !g_frame_pacing || g_logic_updated);
+    g_logic_updated = false;
     if (!g_frame_layout.map_active && g_transition.phase == CASTLE_TRANSITION_NONE) {
         SetBackdropTransitionColor(0);
     }
@@ -922,6 +976,8 @@ static bool InstallWidescreenHooks(void) {
         0x56, 0x8B, 0xF1, 0x8A, 0x86, 0x19, 0x02, 0x00, 0x00, 0x84, 0xC0,
     };
     static const uint8_t map_backdrop_capture_expected[] = {0xE8, 0x1E, 0xBD, 0xFF, 0xFF};
+    static const uint8_t encounter_battle_capture_expected[] = {0xE8, 0x2A, 0xAE, 0x04, 0x00};
+    static const uint8_t script_battle_capture_expected[] = {0xE8, 0xD2, 0x11, 0x04, 0x00};
     static const uint8_t map_scene_release_expected[] = {
         0x56, 0x57, 0x8B, 0xF9, 0x8B, 0xB7, 0x80, 0x02, 0x00, 0x00,
     };
@@ -1025,6 +1081,12 @@ static bool InstallWidescreenHooks(void) {
                           sizeof(map_backdrop_capture_expected),
                           HOOK_ADDRESS(MapBackdropCaptureHook),
                           &g_original_map_backdrop_capture) ||
+         !InstallGameHook(ENCOUNTER_BATTLE_CAPTURE_CALL_ADDRESS, encounter_battle_capture_expected,
+                          sizeof(encounter_battle_capture_expected), HOOK_ADDRESS(EncounterBattleCaptureHook),
+                          &g_original_encounter_battle_capture) ||
+         !InstallGameHook(SCRIPT_BATTLE_CAPTURE_CALL_ADDRESS, script_battle_capture_expected,
+                          sizeof(script_battle_capture_expected), HOOK_ADDRESS(ScriptBattleCaptureHook),
+                          &g_original_script_battle_capture) ||
          !InstallGameHook(MAP_SCENE_RELEASE_FUNCTION_ADDRESS,
                           map_scene_release_expected,
                           sizeof(map_scene_release_expected),
@@ -1085,6 +1147,11 @@ static bool InstallWindowedHooks(void) {
     static const uint8_t windowed_renderer_expected[] = {0x8A, 0x46, 0x30, 0x84, 0xC0};
     static const uint8_t windowed_renderer_replacement[] = {0x30, 0xC0, 0x88, 0x46, 0x30};
     static const uint8_t surface_format_expected[] = {0x8B, 0x10, 0x51, 0x50, 0xFF, 0x52, 0x18};
+    static const uint8_t upload_clear_expected[] = {
+        0x8B, 0x46, 0x08, 0x8B, 0x56, 0x14, 0x6A, 0x00, 0x68, 0x00, 0x00, 0x00,
+        0x01, 0x8B, 0x08, 0x6A, 0x00, 0x52, 0x6A, 0x00, 0x50, 0xFF, 0x51, 0x14,
+        0x8B, 0x46, 0x08, 0x8B, 0xCE,
+    };
     static const uint8_t bink_lock_expected[] = {0x8B, 0x69, 0x04};
     static const uint8_t bink_lock_replacement[] = {0x8B, 0x69, 0x08};
     static const uint8_t bink_unlock_expected[] = {0x8B, 0x41, 0x04};
@@ -1113,6 +1180,9 @@ static bool InstallWindowedHooks(void) {
         !InstallGameHook(SURFACE_FORMAT_HOOK_ADDRESS, surface_format_expected,
                          sizeof(surface_format_expected), HOOK_ADDRESS(SurfaceFormatHook),
                          &g_original_surface_format) ||
+        /* The following upload overwrites every pixel of this windowed back surface. */
+        !InstallGameHook(WINDOWED_UPLOAD_CLEAR_ADDRESS, upload_clear_expected,
+                         sizeof(upload_clear_expected), (LPVOID)WINDOWED_UPLOAD_LOCK_ADDRESS, NULL) ||
         !InstallGameHook(BINK_UNLOCK_CALL_ADDRESS, bink_call_expected,
                          sizeof(bink_call_expected), HOOK_ADDRESS(BinkPresentCallHook), NULL) ||
         !InstallGameHook(UI_CURSOR_DRAW_HOOK_ADDRESS, ui_cursor_draw_expected,

@@ -12,19 +12,7 @@ enum {
     SIDE_PIXELS_PER_ROW = SIDE_WIDTH * 2,
 };
 
-/* CPU data survives DirectDraw surface restoration without retaining any of
-   the game-owned COM objects. Keep the raw strips for reversible tinting. */
-static struct {
-    uintptr_t renderer;
-    uintptr_t source;
-    uintptr_t scene;
-    bool valid;
-    bool rgb565;
-    uint16_t pixels[GAME_CLIENT_HEIGHT][SIDE_PIXELS_PER_ROW];
-    uint16_t tinted[GAME_CLIENT_HEIGHT][SIDE_PIXELS_PER_ROW];
-    int prepared_color;
-} g_backdrop;
-static int g_backdrop_color;
+/* One raw map snapshot feeds the tinted side strips and the held menu frame. */
 static struct {
     uintptr_t renderer;
     uintptr_t source;
@@ -32,7 +20,10 @@ static struct {
     bool valid;
     bool rgb565;
     uint16_t pixels[GAME_CLIENT_HEIGHT][WIDESCREEN_CLIENT_WIDTH];
-} g_transition_backdrop;
+    uint16_t tinted[GAME_CLIENT_HEIGHT][SIDE_PIXELS_PER_ROW];
+    int prepared_color;
+} g_backdrop;
+static int g_backdrop_color;
 static struct {
     bool valid;
     bool rgb565;
@@ -51,12 +42,10 @@ typedef struct {
 
 void InvalidateMapBackdrop(uintptr_t scene) {
     if (g_backdrop.scene == scene) g_backdrop.valid = false;
-    if (g_transition_backdrop.scene == scene) g_transition_backdrop.valid = false;
 }
 
 void ResetMapBackdrop(void) {
     g_backdrop.valid = false;
-    g_transition_backdrop.valid = false;
     g_backdrop_color = 0;
 }
 
@@ -95,18 +84,12 @@ static bool GetMapBuffer(uintptr_t renderer, MapBuffer *buffer) {
 void CaptureMapBackdrop(uintptr_t renderer, uintptr_t scene) {
     MapBuffer buffer;
     g_backdrop.valid = false;
-    if (!GetMapBuffer(renderer, &buffer)) {
-        g_transition_backdrop.valid = false;
-        return;
-    }
+    if (!GetMapBuffer(renderer, &buffer)) return;
 
     for (size_t line = 0; line < GAME_CLIENT_HEIGHT; ++line) {
         const uint16_t *row = (const uint16_t *)buffer.source +
             ((size_t)buffer.y + line) * (size_t)buffer.pitch + (size_t)buffer.x;
-        memcpy(g_backdrop.pixels[line], row, SIDE_WIDTH * sizeof(uint16_t));
-        memcpy(g_backdrop.pixels[line] + SIDE_WIDTH,
-               row + WIDESCREEN_CLIENT_WIDTH - SIDE_WIDTH,
-               SIDE_WIDTH * sizeof(uint16_t));
+        memcpy(g_backdrop.pixels[line], row, sizeof(g_backdrop.pixels[line]));
     }
     g_backdrop.renderer = renderer;
     g_backdrop.source = buffer.source;
@@ -114,8 +97,6 @@ void CaptureMapBackdrop(uintptr_t renderer, uintptr_t scene) {
     g_backdrop.rgb565 = buffer.rgb565;
     g_backdrop.prepared_color = -1;
     g_backdrop.valid = true;
-    /* Keep the menu's held frame before fade, dialog or cursor pixels. */
-    (void)CaptureTransitionBackdrop(renderer, scene);
 }
 
 static void PrepareTint(bool rgb565, int color) {
@@ -148,35 +129,24 @@ static void PrepareTintedBackdrop(void) {
     if (g_backdrop.prepared_color == g_backdrop_color) return;
     PrepareTint(g_backdrop.rgb565, g_backdrop_color);
     for (size_t y = 0; y < GAME_CLIENT_HEIGHT; ++y) {
-        for (size_t x = 0; x < SIDE_PIXELS_PER_ROW; ++x) {
+        const uint16_t *right = g_backdrop.pixels[y] + WIDESCREEN_CLIENT_WIDTH - SIDE_WIDTH;
+        for (size_t x = 0; x < SIDE_WIDTH; ++x) {
             g_backdrop.tinted[y][x] = g_tint.side_pixels[g_backdrop.pixels[y][x]];
+            g_backdrop.tinted[y][SIDE_WIDTH + x] = g_tint.side_pixels[right[x]];
         }
     }
     g_backdrop.prepared_color = g_backdrop_color;
 }
 
-bool CaptureTransitionBackdrop(uintptr_t renderer, uintptr_t scene) {
-    MapBuffer buffer;
-    g_transition_backdrop.valid = false;
-    if (!GetMapBuffer(renderer, &buffer)) return false;
-    for (size_t y = 0; y < GAME_CLIENT_HEIGHT; ++y) {
-        const uint16_t *row = (const uint16_t *)buffer.source +
-            ((size_t)buffer.y + y) * (size_t)buffer.pitch + (size_t)buffer.x;
-        memcpy(g_transition_backdrop.pixels[y], row, WIDESCREEN_CLIENT_WIDTH * sizeof(uint16_t));
-    }
-    g_transition_backdrop.renderer = renderer;
-    g_transition_backdrop.source = buffer.source;
-    g_transition_backdrop.scene = scene;
-    g_transition_backdrop.rgb565 = buffer.rgb565;
-    g_transition_backdrop.valid = true;
-    return true;
+static bool GetTransitionBuffer(uintptr_t renderer, uintptr_t scene, MapBuffer *buffer) {
+    return g_backdrop.valid && g_backdrop.renderer == renderer && g_backdrop.scene == scene &&
+        GetMapBuffer(renderer, buffer) && g_backdrop.source == buffer->source &&
+        g_backdrop.rgb565 == buffer->rgb565;
 }
 
 bool HasTransitionBackdrop(uintptr_t renderer, uintptr_t scene) {
     MapBuffer buffer;
-    return g_transition_backdrop.valid && g_transition_backdrop.renderer == renderer &&
-        g_transition_backdrop.scene == scene && GetMapBuffer(renderer, &buffer) &&
-        g_transition_backdrop.source == buffer.source && g_transition_backdrop.rgb565 == buffer.rgb565;
+    return GetTransitionBuffer(renderer, scene, &buffer);
 }
 
 bool ApplyMapTransition(uintptr_t renderer, int color) {
@@ -196,7 +166,7 @@ bool ApplyMapTransition(uintptr_t renderer, int color) {
 bool DrawTransitionBackdrop(uintptr_t renderer, int color) {
     MapBuffer buffer;
     if (color < 0 || color > CASTLE_TRANSITION_COLOR ||
-        !HasTransitionBackdrop(renderer, g_transition_backdrop.scene) || !GetMapBuffer(renderer, &buffer)) {
+        !GetTransitionBuffer(renderer, g_backdrop.scene, &buffer)) {
         return false;
     }
     SetBackdropTransitionColor(color);
@@ -205,7 +175,7 @@ bool DrawTransitionBackdrop(uintptr_t renderer, int color) {
         uint16_t *row = (uint16_t *)buffer.source +
             ((size_t)buffer.y + y) * (size_t)buffer.pitch + (size_t)buffer.x;
         for (size_t x = 0; x < GAME_CLIENT_WIDTH; ++x) {
-            row[x] = g_tint.pixels[g_transition_backdrop.pixels[y][SIDE_WIDTH + x]];
+            row[x] = g_tint.pixels[g_backdrop.pixels[y][SIDE_WIDTH + x]];
         }
     }
     return true;

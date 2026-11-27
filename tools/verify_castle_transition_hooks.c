@@ -27,13 +27,18 @@ int wmain(void) {
         MAP_SCENE_RESUME_FUNCTION_ADDRESS, MAP_SCENE_SUSPEND_FUNCTION_ADDRESS,
         ORDINARY_MENU_RELEASE_FUNCTION_ADDRESS, SYSTEM_MENU_RELEASE_FUNCTION_ADDRESS, UI_OBJECT_DRAW_FUNCTION_ADDRESS,
         UI_SPRITE_BLIT_FUNCTION_ADDRESS, SAVE_LOAD_FUNCTION_ADDRESS,
+        ENCOUNTER_BATTLE_CAPTURE_CALL_ADDRESS, SCRIPT_BATTLE_CAPTURE_CALL_ADDRESS,
+        WINDOWED_UPLOAD_CLEAR_ADDRESS,
     };
     MH_STATUS status = MH_Initialize();
     if (status != MH_OK) return 4;
     for (size_t i = 0; i < sizeof(addresses) / sizeof(addresses[0]); ++i) {
         LPVOID trampoline = NULL;
         LPVOID target = (LPVOID)(image + addresses[i] - preferred_base);
-        status = MH_CreateHook(target, (LPVOID)(uintptr_t)DummyHook, &trampoline);
+        LPVOID detour = addresses[i] == WINDOWED_UPLOAD_CLEAR_ADDRESS
+            ? (LPVOID)(image + WINDOWED_UPLOAD_LOCK_ADDRESS - preferred_base)
+            : (LPVOID)(uintptr_t)DummyHook;
+        status = MH_CreateHook(target, detour, &trampoline);
         printf("%08lX create=%s trampoline=%s\n", (unsigned long)addresses[i],
                MH_StatusToString(status), trampoline != NULL ? "yes" : "no");
         if (status != MH_OK) return 5;
