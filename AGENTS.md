@@ -11,7 +11,6 @@ Keep each game's launcher and injected runtime under its own directory below `sr
 - Use C11 and CMake.
 - The Castle target process is 32-bit x86. Its injected runtime DLL must remain 32-bit even when the launcher is built as x64.
 - After source or build-system changes, configure and build both Win32 and x64 launchers when the required Visual Studio generator is available.
-- Do not launch the game automatically during validation.
 
 ## Reverse engineering
 
