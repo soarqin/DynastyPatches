@@ -45,6 +45,7 @@ cursor_diagnostics.txt
 /analysis/*
 !/analysis/castle_widescreen_backdrop.md
 !/analysis/castle_widescreen_transition.md
+!/analysis/castle_windowed_cursor.md
 /tools/*
 !/tools/ida_castle_widescreen_backdrop.py
 !/tools/ida_castle_transition.py

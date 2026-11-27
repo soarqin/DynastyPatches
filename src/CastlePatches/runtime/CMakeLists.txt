@@ -22,6 +22,7 @@ configure_file(../CastlePatchesVersion.rc.in CastleRuntimeVersion.rc @ONLY)
 
 add_library(CastleRuntime SHARED
     runtime_dll.c
+    windowed_cursor.c
     widescreen_backdrop.c
     widescreen_transition.c
     ${CASTLE_RUNTIME_ASM}

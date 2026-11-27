@@ -7,6 +7,7 @@
 #include "../castle_addresses.h"
 #include "widescreen_backdrop.h"
 #include "widescreen_transition.h"
+#include "windowed_cursor.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -31,6 +32,7 @@ typedef void (__fastcall *PresentFn)(void *renderer);
 typedef void (__fastcall *TimerSetupFn)(void *timer, void *unused_edx);
 typedef void (__cdecl *GameLogicTickFn)(void);
 typedef void (__fastcall *UiCursorDrawFn)(void *input_manager);
+typedef void (__fastcall *MapSpriteDrawFn)(void *sprite, void *unused_edx, int mode);
 typedef void (__fastcall *VideoCloseFn)(void *video, void *unused_edx);
 typedef void (__fastcall *MapSceneReleaseFn)(void *scene);
 typedef uint16_t *(__cdecl *FrameCopyFn)(int32_t, int32_t, const uint16_t *,
@@ -88,6 +90,9 @@ PresentFn g_original_present;
 TimerSetupFn g_original_timer_setup;
 GameLogicTickFn g_original_game_logic_tick;
 static UiCursorDrawFn g_original_ui_cursor_draw;
+static MapSpriteDrawFn g_original_map_sprite_draw;
+static uintptr_t g_ui_cursor_target;
+static int32_t g_ui_cursor_stride, g_ui_cursor_height;
 static MapSceneReleaseFn g_original_map_scene_release;
 static FrameCopyFn g_original_frame_copy;
 typedef int (__cdecl *MapEffectFn)(void);
@@ -774,9 +779,20 @@ static uint8_t __fastcall RuntimeUiObjectDraw(void *object, void *unused_edx) {
 static int __fastcall RuntimeUiSpriteBlit(void *resource, void *unused_edx, uintptr_t destination,
                                          int32_t x, int32_t y, int32_t mode,
                                          int32_t a6, int32_t a7, int32_t a8) {
-    (void)unused_edx;
     if (g_suppressed_ui_sprite != 0) return 0;
-    return g_original_ui_sprite_blit(resource, NULL, destination, x, y, mode, a6, a7, a8);
+    if (g_ui_cursor_target == 0) {
+        return g_original_ui_sprite_blit(resource, unused_edx, destination, x, y, mode, a6, a7, a8);
+    }
+
+    /* X/Y origin, stride, height, pixel pointer and format from sub_43EE90. */
+    uintptr_t target[6];
+    memcpy(target, (const void *)destination, sizeof(target));
+    if (target[2] != (uintptr_t)g_ui_cursor_stride || target[3] != (uintptr_t)g_ui_cursor_height ||
+        target[4] != g_ui_cursor_target) return 0;
+    target[4] = (uintptr_t)WindowedCursorPixels(false);
+    g_original_ui_sprite_blit(resource, unused_edx, (uintptr_t)target, x, y, mode, a6, a7, a8);
+    target[4] = (uintptr_t)WindowedCursorPixels(true);
+    return g_original_ui_sprite_blit(resource, unused_edx, (uintptr_t)target, x, y, mode, a6, a7, a8);
 }
 
 static uint8_t __fastcall RuntimeSaveLoad(void *state, void *unused_edx, const char *path) {
@@ -879,6 +895,11 @@ static uint16_t *__cdecl RuntimeFrameCopy(int32_t source_width, int32_t source_h
 static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     (void)unused_edx;
     if (IsRuntimeShuttingDown()) return;
+    if (g_windowed && !g_cursor_lock) PresentWindowedCursor(ReadRuntimeWindow(), g_scale2);
+    if (!g_widescreen) {
+        g_original_present(renderer);
+        return;
+    }
     /* Bink can present without sub_406330; retain state updates for that path. */
     if (InterlockedExchange(&g_frame_upload_prepared, 0) == 0) PrepareWidescreenFrame();
     bool bink_frame = InterlockedExchange(&g_bink_frame, 0) != 0;
@@ -907,9 +928,55 @@ static void __fastcall RuntimeUiCursorDraw(void *input_manager, void *unused_edx
         InterlockedCompareExchange(&g_map_frame, 0, 0) != 0 &&
         *(const uintptr_t *)ORDINARY_MENU_OBJECT_ADDRESS == 0;
     if (shift) cursor->x = x + (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
-    if (g_original_ui_cursor_draw != NULL) g_original_ui_cursor_draw(input_manager);
+    if (g_windowed && !g_cursor_lock) {
+        uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+        if (BeginWindowedCursorFrame(renderer, cursor->x, cursor->y)) {
+            g_ui_cursor_target = *(const uintptr_t *)(renderer + RENDERER_PIXELS_OFFSET);
+            g_ui_cursor_stride = *(const int32_t *)(renderer + RENDERER_BUFFER_WIDTH_OFFSET);
+            g_ui_cursor_height = *(const int32_t *)(renderer + RENDERER_BUFFER_HEIGHT_OFFSET);
+            if (g_ui_cursor_target != 0) {
+                g_original_ui_cursor_draw(input_manager);
+                g_ui_cursor_target = 0;
+                EndWindowedCursorFrame();
+            }
+        }
+    } else if (g_original_ui_cursor_draw != NULL) {
+        g_original_ui_cursor_draw(input_manager);
+    }
     if (shift) cursor->x = x;
 }
+
+static void __fastcall RuntimeMapSpriteDraw(void *sprite, void *unused_edx, int mode) {
+    const uintptr_t cursor_sprite = *(const uintptr_t *)MAP_CURSOR_SPRITE_POINTER_ADDRESS;
+    if (cursor_sprite == 0 || (uintptr_t)sprite != cursor_sprite) {
+        g_original_map_sprite_draw(sprite, unused_edx, mode);
+        return;
+    }
+
+    uintptr_t renderer = *(const uintptr_t *)RENDERER_GLOBAL_ADDRESS;
+    if (renderer == 0) return;
+    const POINT *position = (const POINT *)(cursor_sprite + MAP_CURSOR_WORLD_POSITION_OFFSET);
+    const POINT *camera = (const POINT *)MAP_CAMERA_POSITION_ADDRESS;
+    LONG x = position->x - camera->x;
+    LONG y = position->y - camera->y;
+    LONG width = g_widescreen ? WIDESCREEN_CLIENT_WIDTH : GAME_CLIENT_WIDTH;
+    if (x < 0 || x >= width || y < 0 || y >= GAME_CLIENT_HEIGHT ||
+        !BeginWindowedCursorFrame(renderer, x, y)) return;
+    uintptr_t *pixels = (uintptr_t *)(renderer + RENDERER_PIXELS_OFFSET);
+    uintptr_t original = *pixels;
+    if (original == 0) return;
+    *pixels = (uintptr_t)WindowedCursorPixels(false);
+    g_original_map_sprite_draw(sprite, unused_edx, mode);
+    *pixels = (uintptr_t)WindowedCursorPixels(true);
+    g_original_map_sprite_draw(sprite, unused_edx, mode);
+    *pixels = original;
+    EndWindowedCursorFrame();
+}
+
+static const uint8_t ui_blit_expected[] = {0x8B, 0x44, 0x24, 0x10, 0x83, 0xF8, 0x1F, 0x75, 0x28};
+static const uint8_t present_expected[] = {
+    0x83, 0xEC, 0x14, 0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x30,
+};
 
 static bool InstallTransitionHooks(void) {
     static const uint8_t effect_expected[] = {0xA1, 0xE8, 0x8A, 0x46, 0x00, 0x56};
@@ -922,7 +989,6 @@ static bool InstallTransitionHooks(void) {
     static const uint8_t menu_release_expected[] = {0x6A, 0xFF, 0x68, 0xC8, 0xD7, 0x45, 0x00};
     static const uint8_t system_menu_release_expected[] = {0x6A, 0xFF, 0x68, 0xA6, 0xEF, 0x45, 0x00};
     static const uint8_t ui_draw_expected[] = {0x56, 0x8B, 0xF1, 0x8A, 0x86, 0x78, 0x05, 0x00, 0x00};
-    static const uint8_t ui_blit_expected[] = {0x8B, 0x44, 0x24, 0x10, 0x83, 0xF8, 0x1F, 0x75, 0x28};
     static const uint8_t save_load_expected[] = {0x64, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x6A, 0xFF};
     struct {
         uintptr_t address;
@@ -980,9 +1046,6 @@ static bool InstallWidescreenHooks(void) {
     static const uint8_t script_battle_capture_expected[] = {0xE8, 0xD2, 0x11, 0x04, 0x00};
     static const uint8_t map_scene_release_expected[] = {
         0x56, 0x57, 0x8B, 0xF9, 0x8B, 0xB7, 0x80, 0x02, 0x00, 0x00,
-    };
-    static const uint8_t present_expected[] = {
-        0x83, 0xEC, 0x14, 0x56, 0x8B, 0xF1, 0x8A, 0x46, 0x30,
     };
     static const uint8_t frame_copy_expected[] = {
         0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x10, 0x53, 0x56, 0x57,
@@ -1144,6 +1207,8 @@ static bool InstallWidescreenHooks(void) {
 static bool InstallWindowedHooks(void) {
     static const uint8_t windowed_style_expected[] = {0x68, 0x00, 0x00, 0x00, 0x80};
     static const uint8_t windowed_style_replacement[] = {0x68, 0x00, 0x00, 0xCA, 0x00};
+    static const uint8_t cursor_hide_expected[] = {0x6A, 0x00, 0xFF, 0x15, 0xCC, 0x01, 0x46, 0x00};
+    static const uint8_t cursor_show_replacement[] = {0x6A, 0x01, 0xFF, 0x15, 0xCC, 0x01, 0x46, 0x00};
     static const uint8_t windowed_renderer_expected[] = {0x8A, 0x46, 0x30, 0x84, 0xC0};
     static const uint8_t windowed_renderer_replacement[] = {0x30, 0xC0, 0x88, 0x46, 0x30};
     static const uint8_t surface_format_expected[] = {0x8B, 0x10, 0x51, 0x50, 0xFF, 0x52, 0x18};
@@ -1164,6 +1229,7 @@ static bool InstallWindowedHooks(void) {
     static const uint8_t ui_cursor_draw_expected[] = {
         0x8A, 0x81, 0x48, 0x02, 0x00, 0x00, 0x84, 0xC0, 0x74, 0x30,
     };
+    static const uint8_t map_sprite_draw_expected[] = {0x8B, 0xC1, 0x8B, 0x48, 0x6C, 0x85, 0xC9};
 
     if (!ApplyCodePatch(WINDOWED_STYLE_ADDRESS, windowed_style_expected,
                         windowed_style_replacement, sizeof(windowed_style_expected)) ||
@@ -1190,7 +1256,20 @@ static bool InstallWindowedHooks(void) {
                          (LPVOID *)&g_original_ui_cursor_draw)) {
         return false;
     }
-    return true;
+    /* Build a native cursor from the original sprites in unlocked window mode. */
+    return g_cursor_lock ||
+           (ApplyCodePatch(GAME_CURSOR_HIDE_ADDRESS, cursor_hide_expected,
+                           cursor_show_replacement, sizeof(cursor_hide_expected)) &&
+            InstallGameHook(MAP_SPRITE_DRAW_FUNCTION_ADDRESS, map_sprite_draw_expected,
+                            sizeof(map_sprite_draw_expected), HOOK_ADDRESS(RuntimeMapSpriteDraw),
+                            (LPVOID *)&g_original_map_sprite_draw) &&
+            (g_widescreen ||
+             (InstallGameHook(UI_SPRITE_BLIT_FUNCTION_ADDRESS, ui_blit_expected,
+                              sizeof(ui_blit_expected), HOOK_ADDRESS(RuntimeUiSpriteBlit),
+                              (LPVOID *)&g_original_ui_sprite_blit) &&
+              InstallGameHook(PRESENT_FUNCTION_ADDRESS, present_expected,
+                              sizeof(present_expected), HOOK_ADDRESS(RuntimePresent),
+                              (LPVOID *)&g_original_present))));
 }
 
 static bool InstallFullscreenVblankHook(void) {
@@ -1442,6 +1521,15 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
                                                UINT message,
                                                WPARAM w_param,
                                                LPARAM l_param) {
+    if (message == WM_SETCURSOR && (HWND)w_param == window &&
+        LOWORD(l_param) == HTCLIENT && GetForegroundWindow() == window) {
+        HCURSOR cursor = GetWindowedCursor();
+        if (cursor != NULL) {
+            SetCursor(cursor);
+            return TRUE;
+        }
+    }
+
     if (message == ENCOUNTER_FEEDBACK_MESSAGE) {
         KillTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID);
         if (InterlockedCompareExchange(&g_window_proc_installed, 0, 0) == WINDOW_PROC_INSTALLED &&
@@ -1495,6 +1583,7 @@ static LRESULT CALLBACK RuntimeWindowProcedure(HWND window,
         InterlockedExchange(&g_runtime_shutting_down, 1);
     }
     if (message == WM_NCDESTROY) {
+        ReleaseWindowedCursor();
         ClipCursor(NULL);
         KillTimer(window, ENCOUNTER_FEEDBACK_TIMER_ID);
         InterlockedExchange(&g_window_proc_installed, WINDOW_PROC_DESTROYED);

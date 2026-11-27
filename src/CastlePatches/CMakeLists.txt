@@ -79,6 +79,8 @@ add_custom_command(
     COMMAND ${RUNTIME_CONFIGURE_COMMAND}
     COMMAND "${CMAKE_COMMAND}" --build "${RUNTIME_X86_BINARY_DIR}" --config "$<CONFIG>" --parallel
     DEPENDS runtime/runtime_dll.c
+            runtime/windowed_cursor.c
+            runtime/windowed_cursor.h
             runtime/widescreen_backdrop.c
             runtime/widescreen_backdrop.h
             runtime/widescreen_transition.c
@@ -127,6 +129,7 @@ if(BUILD_TESTING AND CMAKE_SIZEOF_VOID_P EQUAL 4)
         include(Dependencies)
         add_executable(CastleRuntimeTransitionTest
             tests/runtime_transition_test.c
+            runtime/windowed_cursor.c
             runtime/widescreen_transition.c
             runtime/widescreen_backdrop.c
         )

@@ -4,7 +4,7 @@
 #include "../castle_addresses.h"
 
 static struct {
-    uintptr_t renderer, scene, state, system_menu, ordinary_menu, command;
+    uintptr_t renderer, scene, state, system_menu, ordinary_menu, command, cursor_sprite;
     int32_t effect_state;
     int16_t brightness, fade_in, fade_out;
     uint16_t color;
@@ -25,6 +25,7 @@ static struct {
 #undef MAP_EFFECT_COLOR_ADDRESS
 #undef TIMER_INTERVAL_ADDRESS
 #undef TIMER_PRESENT_DIVISOR_ADDRESS
+#undef MAP_CURSOR_SPRITE_POINTER_ADDRESS
 #define RENDERER_GLOBAL_ADDRESS ((uintptr_t)&g_test_globals.renderer)
 #define CURRENT_MAP_SCENE_ADDRESS ((uintptr_t)&g_test_globals.scene)
 #define GAME_STATE_OBJECT_ADDRESS ((uintptr_t)&g_test_globals.state)
@@ -38,6 +39,7 @@ static struct {
 #define MAP_EFFECT_COLOR_ADDRESS ((uintptr_t)&g_test_globals.color)
 #define TIMER_INTERVAL_ADDRESS ((uintptr_t)&g_test_globals.timer_interval)
 #define TIMER_PRESENT_DIVISOR_ADDRESS ((uintptr_t)&g_test_globals.timer_divisor)
+#define MAP_CURSOR_SPRITE_POINTER_ADDRESS ((uintptr_t)&g_test_globals.cursor_sprite)
 
 static DWORD g_test_tick;
 static int64_t g_test_counter;
@@ -476,6 +478,33 @@ static void TestUiCursorBounds(void) {
     CheckCursorDraw(&input, 100, 100, 100);
 }
 
+static void __fastcall TestDrawMapSprite(void *sprite, void *unused_edx, int mode) {
+    (void)unused_edx;
+    REQUIRE(sprite == g_test_sprites[1] && mode == 7);
+    ++g_test_draws[1];
+}
+
+static void TestSystemCursor(void) {
+    TestCursorInput input = {0};
+    g_original_ui_cursor_draw = TestDrawCursor;
+    g_test_globals.renderer = 0;
+    g_windowed = true;
+    g_cursor_lock = false;
+    CheckCursorDraw(&input, 100, 100, -1);
+    g_cursor_lock = true;
+    CheckCursorDraw(&input, 100, 100, 100);
+    g_cursor_lock = false;
+    g_windowed = false;
+
+    g_original_map_sprite_draw = TestDrawMapSprite;
+    g_test_globals.cursor_sprite = (uintptr_t)g_test_sprites[0];
+    g_test_draws[1] = 0;
+    RuntimeMapSpriteDraw(g_test_sprites[0], NULL, 7);
+    REQUIRE(g_test_draws[1] == 0);
+    RuntimeMapSpriteDraw(g_test_sprites[1], NULL, 7);
+    REQUIRE(g_test_draws[1] == 1);
+}
+
 static void TestBattleCapture(void) {
     Setup(true);
     MarkMapFrame((uintptr_t)g_test_scene);
@@ -533,6 +562,7 @@ int main(void) {
     TestOrdinaryMenuReturn(true);
     TestOriginalDestinations();
     TestUiCursorBounds();
+    TestSystemCursor();
     TestBattleCapture();
     TestLogicPacing();
     puts("Castle runtime transition, cursor, and pacing tests passed; no game code executed");

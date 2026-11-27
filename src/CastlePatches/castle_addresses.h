@@ -6,6 +6,7 @@
 /* Addresses belong to the supported RPG.exe image and must be checked against
    the expected bytes before any write or MinHook installation. */
 #define WINDOWED_STYLE_ADDRESS ((uintptr_t)0x0040183Au)
+#define GAME_CURSOR_HIDE_ADDRESS ((uintptr_t)0x0040187Au)
 #define WINDOWED_RENDERER_MODE_ADDRESS ((uintptr_t)0x00405C5Bu)
 #define SURFACE_FORMAT_HOOK_ADDRESS ((uintptr_t)0x00405BA5u)
 #define WINDOWED_UPLOAD_CLEAR_ADDRESS ((uintptr_t)0x00406439u)
@@ -81,6 +82,10 @@
 #define CURSOR_UPDATE_HOOK_ADDRESS ((uintptr_t)0x00408830u)
 #define CURSOR_UPDATE_GET_CURSOR_RETURN_ADDRESS ((uintptr_t)0x0040883Bu)
 #define UI_CURSOR_DRAW_HOOK_ADDRESS ((uintptr_t)0x0043E1B0u)
+#define MAP_SPRITE_DRAW_FUNCTION_ADDRESS ((uintptr_t)0x0040A6D0u)
+#define MAP_CURSOR_SPRITE_POINTER_ADDRESS ((uintptr_t)0x0089F7E0u)
+#define MAP_CAMERA_POSITION_ADDRESS ((uintptr_t)0x00978514u)
+#define MAP_CURSOR_WORLD_POSITION_OFFSET 0x10u
 #define UI_CURSOR_POSITION_OFFSET 0x238u
 
 /* Renderer layout verified with Python idapro against the supported image. */
