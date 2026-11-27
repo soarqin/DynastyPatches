@@ -36,15 +36,23 @@ static bool Enabled(const LauncherOption *option) {
     return !option->depends_on || option->depends_on->value != 0;
 }
 
+static uint32_t IniValue(const LauncherRange *range, uint32_t value) {
+    return range && range->ini_values ? range->ini_values[value - range->first] : value;
+}
+
 static void LoadOptions(void) {
     for (int i = 0; i < ui.spec->option_count; ++i) {
         LauncherOption *option = &ui.spec->options[i];
-        uint32_t value = option->default_value;
+        const LauncherRange *range = option->range;
+        uint32_t value = IniValue(range, option->default_value);
         if (ui.ini[0])
             value = GetPrivateProfileIntW(option->section, option->key, (INT)value, ui.ini);
-        const LauncherRange *range = option->range;
         if (!range) value = value != 0;
-        else if (value < range->first || value > range->last) {
+        else if (range->ini_values) {
+            uint32_t choice = range->first;
+            while (choice <= range->last && IniValue(range, choice) != value) ++choice;
+            value = choice <= range->last ? choice : option->default_value;
+        } else if (value < range->first || value > range->last) {
             /* Legacy multiplier edits clamp; an unknown choice falls back to its default. */
             value = range->labels ? option->default_value :
                     value < range->first ? range->first : range->last;
@@ -61,7 +69,7 @@ void LauncherSaveOptions(void) {
     for (int i = 0; i < ui.spec->option_count; ++i) {
         const LauncherOption *option = &ui.spec->options[i];
         wchar_t number[16];
-        swprintf_s(number, ARRAYSIZE(number), L"%u", option->value);
+        swprintf_s(number, ARRAYSIZE(number), L"%u", IniValue(option->range, option->value));
         if (!ui.ini[0] || !WritePrivateProfileStringW(option->section, option->key, number, ui.ini)) {
             LauncherSetStatus(L"无法保存设置，请检查启动器所在目录的写入权限。");
             return;

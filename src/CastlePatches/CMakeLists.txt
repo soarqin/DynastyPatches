@@ -86,6 +86,7 @@ add_custom_command(
             runtime/widescreen_transition.c
             runtime/widescreen_transition.h
             castle_addresses.h
+            window_scale.h
             runtime/runtime_hooks.asm
             runtime/runtime_hook_addresses.inc
             runtime/CastleRuntime.def

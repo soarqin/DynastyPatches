@@ -13,6 +13,7 @@ typedef struct {
 typedef struct {
     uint32_t first, last;
     const wchar_t *const *labels; /* NULL for numeric multipliers. */
+    const uint32_t *ini_values; /* Optional INI values in display order. */
 } LauncherRange;
 
 typedef struct LauncherOption {
@@ -24,7 +25,7 @@ typedef struct LauncherOption {
     const LauncherRange *range; /* NULL for a checkbox. */
     const struct LauncherOption *depends_on;
     bool clear_when_disabled;
-    uint32_t value; /* Uses the same units as the INI file. */
+    uint32_t value; /* UI value in the range, translated on load and save if mapped. */
 } LauncherOption;
 
 typedef struct {

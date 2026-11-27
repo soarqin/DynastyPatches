@@ -8,6 +8,7 @@
 #include <string.h>
 #include <wchar.h>
 #include "runtime_loader_stub_blob.h"
+#include "window_scale.h"
 
 #ifndef _countof
 #define _countof(array) (sizeof(array) / sizeof((array)[0]))
@@ -35,9 +36,12 @@ static const LauncherPage pages[] = {
 
 static const wchar_t *const scales[] = {
     L"1×（640 × 480）", L"1.5×（960 × 720）", L"2×（1280 × 960）",
-    L"2.5×（1600 × 1200）", L"3×（1920 × 1440）",
+    L"2.25×（1440 × 1080）", L"2.5×（1600 × 1200）", L"3×（1920 × 1440）",
 };
-static const LauncherRange scale_range = {2, 6, scales}, multiplier_range = {1, 10, NULL};
+static const uint32_t scale_ini_values[] = {2, 3, 4, CASTLE_SCALE2_225, 5, 6};
+_Static_assert(_countof(scales) == _countof(scale_ini_values), "Each scale needs an INI value");
+static const LauncherRange scale_range = {0, _countof(scales) - 1, scales, scale_ini_values};
+static const LauncherRange multiplier_range = {1, 10, NULL};
 
 static LauncherOption settings[] = {
     [ID_NO_CD] = {BASIC, L"免 CD", L"Patches", L"NoCd", 1},
@@ -50,7 +54,7 @@ static LauncherOption settings[] = {
     [ID_MONEY_MULTIPLIER] = {RULES, L"金钱倍率", L"Patches", L"MoneyMultiplier", 1, &multiplier_range},
     [ID_DYNAMIC_ENCOUNTER_RATE] = {RULES, L"动态调整遇敌率", L"Patches", L"DynamicEncounterRate"},
     [ID_WINDOWED] = {DISPLAY, L"窗口模式（修正鼠标坐标）", L"Display", L"Windowed"},
-    [ID_SCALE] = {DISPLAY, L"窗口倍率", L"Display", L"Scale2", 2, &scale_range, &settings[ID_WINDOWED]},
+    [ID_SCALE] = {DISPLAY, L"窗口倍率", L"Display", L"Scale2", 0, &scale_range, &settings[ID_WINDOWED]},
     [ID_CURSOR_LOCK] = {DISPLAY, L"锁定鼠标在窗口内", L"Display", L"CursorLock", 0, NULL, &settings[ID_WINDOWED]},
     [ID_WIDESCREEN] = {DISPLAY, L"宽屏地图（864 × 480）", L"Display", L"Widescreen", 0, NULL, &settings[ID_WINDOWED]},
 };
@@ -78,8 +82,6 @@ typedef struct LaunchOptions {
     bool windowed;
     bool cursor_lock;
     bool widescreen;
-    /* Fixed-point scale in half-units: 2 = 1×, 3 = 1.5×, ... */
-    uint32_t scale2;
     uint32_t experience_multiplier;
     uint32_t money_multiplier;
     bool dynamic_encounter_rate;
@@ -546,7 +548,6 @@ static void Launch(HWND owner) {
         .windowed = settings[ID_WINDOWED].value != 0,
         .cursor_lock = settings[ID_CURSOR_LOCK].value != 0,
         .widescreen = settings[ID_WIDESCREEN].value != 0,
-        .scale2 = settings[ID_SCALE].value,
         .experience_multiplier = settings[ID_EXP_MULTIPLIER].value,
         .money_multiplier = settings[ID_MONEY_MULTIPLIER].value,
         .dynamic_encounter_rate = settings[ID_DYNAMIC_ENCOUNTER_RATE].value != 0,

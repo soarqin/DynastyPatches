@@ -5,6 +5,7 @@
 #include <MinHook.h>
 
 #include "../castle_addresses.h"
+#include "../window_scale.h"
 #include "widescreen_backdrop.h"
 #include "widescreen_transition.h"
 #include "windowed_cursor.h"
@@ -68,7 +69,7 @@ static GetCursorPosFn g_original_get_cursor_pos;
 static SetCursorPosFn g_original_set_cursor_pos;
 static CreateWindowExAFn g_original_create_window_ex_a;
 static volatile LONG g_cursor_hooks_installed;
-static uint32_t g_scale2 = 2;
+static uint32_t g_scale4 = 4;
 uint32_t g_experience_multiplier = 1;
 uint32_t g_money_multiplier = 1;
 static bool g_cursor_lock;
@@ -167,11 +168,12 @@ static bool GetConfigPath(wchar_t *path, size_t capacity) {
     return wcscat_s(path, capacity, L"CastlePatches.ini") == 0;
 }
 
-static uint32_t LoadScale(void) {
+static uint32_t LoadScale4(void) {
     wchar_t path[MAX_PATH];
-    if (!GetConfigPath(path, _countof(path))) return 2;
-    int value = GetPrivateProfileIntW(L"Display", L"Scale2", 2, path);
-    return value >= 2 && value <= 6 ? (uint32_t)value : 2;
+    if (!GetConfigPath(path, _countof(path))) return 4;
+    uint32_t value = GetPrivateProfileIntW(L"Display", L"Scale2", 2, path);
+    if (value == CASTLE_SCALE2_225) return 9;
+    return value >= 2u && value <= 6u ? value * 2u : 4u;
 }
 
 static uint32_t LoadMultiplier(const wchar_t *key) {
@@ -300,12 +302,15 @@ void __cdecl OffsetMapUiSpriteX(uintptr_t object, uintptr_t caller) {
     *(int32_t *)object += (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
 }
 
+static bool GetClientBounds(HWND window, RECT *client) {
+    return GetClientRect(window, client) && client->right > 0 && client->bottom > 0;
+}
+
 static bool GetFixedViewport(HWND window, RECT *viewport) {
     RECT client;
-    if (viewport == NULL || !GetClientRect(window, &client)) return false;
+    if (!GetClientBounds(window, &client)) return false;
     LONG client_width = client.right - client.left;
     LONG client_height = client.bottom - client.top;
-    if (client_width <= 0 || client_height <= 0) return false;
 
     LONG width;
     LONG height;
@@ -330,24 +335,24 @@ static BOOL WINAPI RuntimeGetCursorPos(LPPOINT point) {
     if (window == NULL) window = ReadGameWindow();
     if (window == NULL || !IsWindow(window) || !ScreenToClient(window, point)) return FALSE;
 
-    bool game_cursor = (uintptr_t)_ReturnAddress() == CURSOR_UPDATE_GET_CURSOR_RETURN_ADDRESS;
-    if (g_widescreen && !game_cursor && !IsCursorMapActive()) {
-        RECT viewport;
-        if (!GetFixedViewport(window, &viewport)) return FALSE;
-        if (!PtInRect(&viewport, *point)) {
-            point->x = -1;
-            point->y = -1;
-            return TRUE;
+    if (g_widescreen) {
+        RECT client;
+        if (!GetClientBounds(window, &client)) return FALSE;
+        bool game_cursor = (uintptr_t)_ReturnAddress() == CURSOR_UPDATE_GET_CURSOR_RETURN_ADDRESS;
+        bool fixed_ui = !game_cursor && !IsCursorMapActive();
+        bool outside_client = fixed_ui && !PtInRect(&client, *point);
+        point->x = (LONG)((int64_t)point->x * WIDESCREEN_CLIENT_WIDTH / client.right);
+        point->y = (LONG)((int64_t)point->y * WIDESCREEN_CLIENT_HEIGHT / client.bottom);
+        if (fixed_ui) {
+            point->x -= (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+            if (outside_client || point->x < 0 || point->x >= GAME_CLIENT_WIDTH)
+                *point = (POINT){-1, -1};
         }
-        point->x = (LONG)(((int64_t)(point->x - viewport.left) * GAME_CLIENT_WIDTH) /
-                          (viewport.right - viewport.left));
-        point->y = (LONG)(((int64_t)(point->y - viewport.top) * GAME_CLIENT_HEIGHT) /
-                          (viewport.bottom - viewport.top));
         return TRUE;
     }
 
-    point->x = (LONG)(((int64_t)point->x * 2) / (int64_t)g_scale2);
-    point->y = (LONG)(((int64_t)point->y * 2) / (int64_t)g_scale2);
+    point->x = (LONG)(((int64_t)point->x * 4) / (int64_t)g_scale4);
+    point->y = (LONG)(((int64_t)point->y * 4) / (int64_t)g_scale4);
     return TRUE;
 }
 
@@ -359,15 +364,17 @@ static BOOL WINAPI RuntimeSetCursorPos(int x, int y) {
     if (window == NULL || !IsWindow(window)) return FALSE;
     POINT point;
     if (g_widescreen) {
-        RECT viewport;
-        if (!GetFixedViewport(window, &viewport)) return FALSE;
-        point.x = viewport.left + (LONG)(((int64_t)x * (viewport.right - viewport.left)) /
-                                         GAME_CLIENT_WIDTH);
-        point.y = viewport.top + (LONG)(((int64_t)y * (viewport.bottom - viewport.top)) /
-                                        GAME_CLIENT_HEIGHT);
+        RECT client;
+        if (!GetClientBounds(window, &client)) return FALSE;
+        int64_t wide_x = (int64_t)x + (WIDESCREEN_CLIENT_WIDTH - GAME_CLIENT_WIDTH) / 2;
+        int64_t scaled_x = wide_x * client.right;
+        /* GetCursorPos truncates to a source pixel. Place the cursor at its first output pixel. */
+        point.x = (LONG)((scaled_x + (scaled_x > 0 ? WIDESCREEN_CLIENT_WIDTH - 1 : 0)) /
+                         WIDESCREEN_CLIENT_WIDTH);
+        point.y = (LONG)((int64_t)y * client.bottom / WIDESCREEN_CLIENT_HEIGHT);
     } else {
-        point.x = (LONG)(((int64_t)x * g_scale2) / 2);
-        point.y = (LONG)(((int64_t)y * g_scale2) / 2);
+        point.x = (LONG)(((int64_t)x * g_scale4) / 4);
+        point.y = (LONG)(((int64_t)y * g_scale4) / 4);
     }
     return ClientToScreen(window, &point) && g_original_set_cursor_pos(point.x, point.y);
 }
@@ -895,7 +902,7 @@ static uint16_t *__cdecl RuntimeFrameCopy(int32_t source_width, int32_t source_h
 static void __fastcall RuntimePresent(void *renderer, void *unused_edx) {
     (void)unused_edx;
     if (IsRuntimeShuttingDown()) return;
-    if (g_windowed && !g_cursor_lock) PresentWindowedCursor(ReadRuntimeWindow(), g_scale2);
+    if (g_windowed && !g_cursor_lock) PresentWindowedCursor(ReadRuntimeWindow(), g_scale4);
     if (!g_widescreen) {
         g_original_present(renderer);
         return;
@@ -1394,10 +1401,11 @@ static DWORD InstallSettlementHooks(void) {
 }
 
 static void ResizeGameWindow(HWND window) {
-    uint32_t logical_width = g_widescreen ? WIDESCREEN_CLIENT_WIDTH : GAME_CLIENT_WIDTH;
     uint32_t logical_height = g_widescreen ? WIDESCREEN_CLIENT_HEIGHT : GAME_CLIENT_HEIGHT;
-    LONG client_width = (LONG)(((uint64_t)logical_width * g_scale2 + 1u) / 2u);
-    LONG client_height = (LONG)(((uint64_t)logical_height * g_scale2 + 1u) / 2u);
+    LONG client_height = (LONG)(((uint64_t)logical_height * g_scale4 + 2u) / 4u);
+    /* ceil((height * 16 / 9) / 16) * 16, with the division kept exact until rounding. */
+    LONG client_width = g_widescreen ? ((client_height + 8) / 9) * 16 :
+        (LONG)(((uint64_t)GAME_CLIENT_WIDTH * g_scale4 + 2u) / 4u);
     RECT rect = {0, 0, client_width, client_height};
     if (!AdjustWindowRectEx(&rect, (DWORD)GetWindowLongA(window, GWL_STYLE), GetMenu(window) != NULL,
                             (DWORD)GetWindowLongA(window, GWL_EXSTYLE))) return;
@@ -1617,7 +1625,7 @@ static bool InstallRuntimeWindowProcedure(void) {
 }
 
 __declspec(dllexport) DWORD WINAPI CastleRuntimeStart(void) {
-    g_scale2 = LoadScale();
+    g_scale4 = LoadScale4();
     g_windowed = LoadBool(L"Windowed", false);
     g_widescreen = LoadBool(L"Widescreen", false);
     g_cursor_lock = LoadBool(L"CursorLock", false);

@@ -553,6 +553,58 @@ static void TestLogicPacing(void) {
     REQUIRE(!ShouldRunGameLogic());
 }
 
+static POINT g_test_screen_cursor;
+
+static BOOL WINAPI ReadTestScreenCursor(LPPOINT point) {
+    *point = g_test_screen_cursor;
+    return TRUE;
+}
+
+static BOOL WINAPI WriteTestScreenCursor(int x, int y) {
+    g_test_screen_cursor = (POINT){x, y};
+    return TRUE;
+}
+
+static void TestScaledWindow(void) {
+    static const struct { uint32_t scale4; LONG width, height; } sizes[] = {
+        {4, 864, 480}, {6, 1280, 720}, {8, 1712, 960},
+        {10, 2144, 1200}, {12, 2560, 1440}, {9, 1920, 1080},
+    };
+    HWND window = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0, 0, 0,
+                                  NULL, NULL, GetModuleHandleW(NULL), NULL);
+    REQUIRE(window != NULL);
+    g_widescreen = true;
+    for (size_t i = 0; i < _countof(sizes); ++i) {
+        RECT client;
+        g_scale4 = sizes[i].scale4;
+        ResizeGameWindow(window);
+        REQUIRE(GetClientRect(window, &client));
+        REQUIRE(client.right == sizes[i].width && client.bottom == sizes[i].height);
+    }
+
+    WriteRuntimeWindow(window);
+    g_original_get_cursor_pos = ReadTestScreenCursor;
+    g_original_set_cursor_pos = WriteTestScreenCursor;
+    POINT origin = {0}, point;
+    REQUIRE(ClientToScreen(window, &origin));
+    g_cursor_map_active = 1;
+    g_test_screen_cursor = (POINT){origin.x + 1919, origin.y + 1079};
+    REQUIRE(RuntimeGetCursorPos(&point) && point.x == 863 && point.y == 479);
+
+    g_cursor_map_active = 0;
+    g_test_screen_cursor = (POINT){origin.x + 248, origin.y};
+    REQUIRE(RuntimeGetCursorPos(&point) && point.x == -1 && point.y == -1);
+    REQUIRE(RuntimeSetCursorPos(0, 0) && g_test_screen_cursor.x == origin.x + 249);
+    REQUIRE(RuntimeGetCursorPos(&point) && point.x == 0 && point.y == 0);
+
+    g_widescreen = false;
+    ResizeGameWindow(window);
+    RECT client;
+    REQUIRE(GetClientRect(window, &client) && client.right == 1440 && client.bottom == 1080);
+    WriteRuntimeWindow(NULL);
+    REQUIRE(DestroyWindow(window));
+}
+
 int main(void) {
     TestSystemMenuReturn(true, false);
     TestSystemMenuReturn(true, true);
@@ -565,7 +617,8 @@ int main(void) {
     TestSystemCursor();
     TestBattleCapture();
     TestLogicPacing();
-    puts("Castle runtime transition, cursor, and pacing tests passed; no game code executed");
+    TestScaledWindow();
+    puts("Castle runtime transition, cursor, pacing, and window tests passed; no game code executed");
     return 0;
 }
 

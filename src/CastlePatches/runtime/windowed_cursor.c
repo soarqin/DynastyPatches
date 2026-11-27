@@ -111,10 +111,10 @@ void EndWindowedCursorFrame(void) {
     }
 }
 
-static HCURSOR CreateSpriteCursor(uint32_t scale2) {
+static HCURSOR CreateSpriteCursor(int scale4) {
     const RECT *bounds = &g_pending_bounds;
-    int width = ((bounds->right - bounds->left) * (int)scale2 + 1) / 2;
-    int height = ((bounds->bottom - bounds->top) * (int)scale2 + 1) / 2;
+    int width = ((bounds->right - bounds->left) * scale4 + 2) / 4;
+    int height = ((bounds->bottom - bounds->top) * scale4 + 2) / 4;
     BITMAPINFO bitmap = {
         .bmiHeader = {
             .biSize = sizeof(BITMAPINFOHEADER),
@@ -133,9 +133,9 @@ static HCURSOR CreateSpriteCursor(uint32_t scale2) {
     int mask_stride = ((width + 15) / 16) * 2;
     memset(mask_bits, 0, (size_t)mask_stride * (size_t)height);
     for (int y = 0; y < height; ++y) {
-        int source_y = bounds->top + (y * 2) / (int)scale2;
+        int source_y = bounds->top + y * 4 / scale4;
         for (int x = 0; x < width; ++x) {
-            int source_x = bounds->left + (x * 2) / (int)scale2;
+            int source_x = bounds->left + x * 4 / scale4;
             uint32_t pixel = g_pending[source_y][source_x];
             ((uint32_t *)pixels)[(size_t)y * (size_t)width + (size_t)x] = pixel;
             if (pixel == 0) mask_bits[y * mask_stride + x / 8] |= (uint8_t)(0x80u >> (x % 8));
@@ -145,8 +145,8 @@ static HCURSOR CreateSpriteCursor(uint32_t scale2) {
     HCURSOR cursor = NULL;
     if (mask != NULL) {
         ICONINFO icon = {
-            .xHotspot = (DWORD)((CURSOR_RADIUS - bounds->left) * (int)scale2 / 2),
-            .yHotspot = (DWORD)((CURSOR_RADIUS - bounds->top) * (int)scale2 / 2),
+            .xHotspot = (DWORD)((CURSOR_RADIUS - bounds->left) * scale4 / 4),
+            .yHotspot = (DWORD)((CURSOR_RADIUS - bounds->top) * scale4 / 4),
             .hbmMask = mask,
             .hbmColor = color,
         };
@@ -166,15 +166,15 @@ static bool IsOverGameClient(HWND window) {
            PtInRect(&client, cursor.ptScreenPos);
 }
 
-void PresentWindowedCursor(HWND window, uint32_t scale2) {
+void PresentWindowedCursor(HWND window, uint32_t scale4) {
     if (!g_has_pending) return;
     g_has_pending = false;
-    if (scale2 < 2u || scale2 > 2u * CURSOR_MAX_SCALE ||
+    if (scale4 < 4u || scale4 > 4u * CURSOR_MAX_SCALE ||
         (g_cursor != NULL && memcmp(g_displayed, g_pending, sizeof(g_displayed)) == 0)) {
         return;
     }
 
-    HCURSOR cursor = CreateSpriteCursor(scale2);
+    HCURSOR cursor = CreateSpriteCursor((int)scale4);
     if (cursor == NULL) return;
     HCURSOR previous = g_cursor;
     g_cursor = cursor;
